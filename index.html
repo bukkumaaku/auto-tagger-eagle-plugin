@@ -1,0 +1,144 @@
+<!doctype html>
+<html>
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+		<script src="js/vue.global.js"></script>
+		<script src="js/naiveui.js"></script>
+		<script src="js/aiTagger/tagset.js"></script>
+		<script type="text/javascript" src="js/plugin.js"></script>
+	</head>
+
+	<body style="background-color: #ffffff">
+		<div
+			id="app"
+			style="
+				width: 600px;
+				margin: auto auto;
+				position: absolute;
+				top: 0;
+				bottom: 0;
+				left: 0;
+				right: 0;
+				height: fit-content;
+			"
+		>
+			<n-form
+				:model="formData"
+				label-placement="left"
+				label-width="auto"
+				style="max-width: 500px; margin: auto auto; position: relative"
+			>
+				<n-form-item label="进度" path="modelName">
+					<span>{{ allItem }}/{{ completeItem }}</span> &nbsp;&nbsp;
+					<n-progress
+						type="line"
+						:percentage="(completeItem / allItem * 100).toFixed(2)"
+						indicator-placement="inside"
+					/>
+				</n-form-item>
+				<!-- 模型位置 -->
+				<n-form-item label="模型位置" path="modelPath">
+					<!-- <n-input v-model:value="formData.modelPath" placeholder="请输入模型路径" /> -->
+					<n-select v-model:value="formData.modelPath" :options="options" />
+				</n-form-item>
+				<!-- 阈值 -->
+				<n-form-item label="阈值" path="threshold">
+					<n-input-number v-model:value="formData.threshold" :min="0" :max="1" :step="0.01" />
+				</n-form-item>
+				<!-- 步数 -->
+				<!-- <n-form-item label="步数" path="steps">
+					<n-input-number v-model:value="formData.steps" :min="1" :max="10" />
+				</n-form-item> -->
+				<!-- 过滤标签 -->
+				<n-form-item label="过滤标签" path="filterTags">
+					<n-select
+						filterable
+						multiple
+						tag
+						:show="false"
+						:show-arrow="false"
+						v-model:value="formData.filterTags"
+						placeholder="输入过滤的标签（英语），回车确认"
+					/>
+				</n-form-item>
+				<!-- 是否覆写 -->
+				<n-form-item label="是否覆写" path="overwrite">
+					<n-switch v-model:value="formData.overwrite" />
+				</n-form-item>
+				<!-- 标签语言选择 -->
+				<n-form-item label="标签语言" path="language">
+					<n-radio-group v-model:value="formData.language" name="language">
+						<n-space>
+							<n-radio value="zh">中文</n-radio>
+							<n-radio value="en">英文</n-radio>
+							<n-radio value="mix">中文+英文</n-radio>
+						</n-space>
+					</n-radio-group>
+				</n-form-item>
+				<!-- 分隔符 -->
+				<n-form-item label="分隔符" path="splitter">
+					<n-input
+						v-model:value="formData.splitter"
+						:placeholder="formData.language === 'mix' ? '请输入分隔符' : '中文和英文标签共存才需要开启分隔符'"
+						:disabled="formData.language !== 'mix'"
+					/>
+				</n-form-item>
+				<!-- 操作按钮 -->
+				<div style="display: flex; gap: 10px; justify-content: flex-end">
+					<n-button type="primary" @click="handleSubmit">确定</n-button>
+					<n-button @click="handleReset">恢复默认</n-button>
+					<!-- <n-button @click="handleReFresh">刷新</n-button> -->
+				</div>
+			</n-form>
+		</div>
+		<script>
+			const { createApp, ref } = Vue;
+			let config = {};
+			async function main() {
+				config = await getConfig();
+				createApp({
+					setup() {
+						const formData = ref(config);
+						// 提交处理
+						const handleSubmit = async () => {
+							if (formData.value.modelPath === "") {
+								alert("请选择模型路径");
+								return;
+							}
+							if (allItem.value === completeItem.value) {
+								alert("所有文件已打标完成");
+								return;
+							}
+							config = formData.value;
+							await setConfig(config);
+							console.log("提交数据:", formData.value);
+							await startGetTag(config);
+						};
+						// 重置表单
+						const handleReset = () => {
+							formData.value = config;
+						};
+						const options = ref([]);
+						const allItem = ref(0);
+						const completeItem = ref(0);
+						const handleReFresh = () => {
+							window.location.reload();
+						};
+						window.options = options;
+						window.formData = formData;
+						window.allItem = allItem;
+						window.completeItem = completeItem;
+						return { formData, handleSubmit, handleReset, options, handleReFresh, allItem, completeItem };
+					},
+				})
+					.use(naive)
+					.mount("#app");
+			}
+			main();
+
+			//import * as aiTagger from "@/assets/index.js";
+			// 表单数据
+		</script>
+	</body>
+</html>

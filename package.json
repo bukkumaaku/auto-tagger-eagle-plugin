@@ -1,0 +1,15 @@
+{
+	"name": "tagger",
+	"private": true,
+	"devDependencies": {
+		"@types/bun": "latest"
+	},
+	"peerDependencies": {
+		"typescript": "^5"
+	},
+	"dependencies": {
+		"csv-parser": "^3.2.0",
+		"onnxruntime-node": "^1.22.0",
+		"sharp": "^0.34.2"
+	}
+}

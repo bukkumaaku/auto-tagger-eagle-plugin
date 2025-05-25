@@ -1,0 +1,16 @@
+{
+	"id": "d7d5bc15-2487-49f4-9462-e38d143ada0a",
+	"version": "1.0.0",
+	"platform": "all",
+	"arch": "all",
+	"name": "auto-tagger",
+	"logo": "/logo.png",
+	"keywords": [],
+	"devTools": false,
+	"main": {
+		"serviceMode": true,
+		"url": "index.html",
+		"width": 640,
+		"height": 480
+	}
+}

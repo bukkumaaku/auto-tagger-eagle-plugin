@@ -1,0 +1,14 @@
+{
+  "modelPath": "",
+  "threshold": 0.25,
+  "steps": 1,
+  "filterTags": [
+    "1boy",
+    "1个男孩",
+    "1girl",
+    "1个女孩"
+  ],
+  "overwrite": true,
+  "language": "zh",
+  "splitter": ""
+}
