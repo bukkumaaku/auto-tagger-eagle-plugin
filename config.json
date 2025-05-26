@@ -1,5 +1,5 @@
 {
-  "modelPath": "",
+  "modelPath": "SmilingWolf-wd-vit-tagger-v3",
   "threshold": 0.25,
   "steps": 1,
   "filterTags": [
@@ -10,5 +10,5 @@
   ],
   "overwrite": true,
   "language": "zh",
-  "splitter": ""
+  "splitter": "|"
 }

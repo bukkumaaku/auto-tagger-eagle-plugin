@@ -32,7 +32,7 @@ async function startGetTag(config) {
 	items.forEach((item) => {
 		imagePath.push(item.thumbnailPath);
 	});
-	const aiTagger = require(__dirname + "\\js\\aiTagger");
+	const aiTagger = require(__dirname + "\\js\\utils\\ai-tagger.js");
 	await aiTagger(imagePath, items, setTag, config, window.formData.value.overwrite);
 	await wait(500);
 	alert("已完成");
