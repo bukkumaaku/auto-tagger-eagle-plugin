@@ -33,7 +33,7 @@
 					<span>{{ allItem }}/{{ completeItem }}</span> &nbsp;&nbsp;
 					<n-progress
 						type="line"
-						:percentage="(completeItem / allItem * 100).toFixed(2)"
+						:percentage="Number((completeItem / allItem * 100).toFixed(2))"
 						indicator-placement="inside"
 					/>
 				</n-form-item>
@@ -52,15 +52,20 @@
 				</n-form-item>
 				<!-- 过滤标签 -->
 				<n-form-item label="过滤标签" path="filterTags">
-					<n-select
-						filterable
-						multiple
-						tag
-						:show="false"
-						:show-arrow="false"
-						v-model:value="formData.filterTags"
-						placeholder="输入过滤的标签（英语），回车确认"
-					/>
+					<n-tooltip trigger="hover">
+						<template #trigger>
+							<n-select
+								filterable
+								multiple
+								tag
+								:show="false"
+								:show-arrow="false"
+								v-model:value="formData.filterTags"
+								placeholder="输入过滤的标签（英语），回车确认"
+							/>
+						</template>
+						被过滤的标签将不会写入文件的标签组中
+					</n-tooltip>
 				</n-form-item>
 				<!-- 是否覆写 -->
 				<n-form-item label="是否覆写" path="overwrite">
@@ -72,7 +77,12 @@
 						<n-space>
 							<n-radio value="zh">中文</n-radio>
 							<n-radio value="en">英文</n-radio>
-							<n-radio value="mix">中文+英文</n-radio>
+							<n-tooltip trigger="hover">
+								<template #trigger>
+									<n-radio value="mix">中文+英文</n-radio>
+								</template>
+								中文和英文标签共存才需要开启分隔符
+							</n-tooltip>
 						</n-space>
 					</n-radio-group>
 				</n-form-item>
