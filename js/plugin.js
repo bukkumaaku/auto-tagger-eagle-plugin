@@ -8,17 +8,19 @@ async function wait(ms) {
 	});
 }
 
-async function setTag(imageItem, tagListBatch) {
-	window.completeItem.value++;
-	const tagList = tagListBatch[0].map((tag) => {
-		if (window.formData.value.language === "zh") if (tagger[tag] !== undefined) return tagger[tag];
-		if (window.formData.value.language === "mix")
-			if (tagger[tag] !== undefined) return `${tagger[tag]}${window.formData.value.splitter}${tag}`;
-		return tag;
-	});
-	const tagListFiltered = tagList.filter((tag) => !window.formData.value.filterTags.includes(tag));
-	imageItem.tags = tagListFiltered;
-	await imageItem.save();
+async function setTag(imageItems, tagListBatch) {
+	for (let i = 0; i < imageItems.length; i++) {
+		window.completeItem.value++;
+		const tagList = tagListBatch[i].map((tag) => {
+			if (window.formData.value.language === "zh") if (tagger[tag] !== undefined) return tagger[tag];
+			if (window.formData.value.language === "mix")
+				if (tagger[tag] !== undefined) return `${tagger[tag]}${window.formData.value.splitter}${tag}`;
+			return tag;
+		});
+		const tagListFiltered = tagList.filter((tag) => !window.formData.value.filterTags.includes(tag));
+		imageItems[i].tags = tagListFiltered;
+		await imageItems[i].save();
+	}
 }
 
 async function startGetTag(config) {
@@ -32,8 +34,12 @@ async function startGetTag(config) {
 	items.forEach((item) => {
 		imagePath.push(item.thumbnailPath);
 	});
-	const aiTagger = require(__dirname + "\\js\\utils\\ai-tagger.js");
-	await aiTagger(imagePath, items, setTag, config, window.formData.value.overwrite);
+	try {
+		const aiTagger = require(__dirname + "\\js\\utils\\ai-tagger.js");
+		await aiTagger(imagePath, items, setTag, config, window.formData.value.overwrite);
+	} catch (e) {
+		alert("有部分文件处理失败，请关闭窗口后重试");
+	}
 	await wait(500);
 	alert("已完成");
 	is_processing = false;

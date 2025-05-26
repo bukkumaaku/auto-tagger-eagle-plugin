@@ -94,7 +94,6 @@ async function getTag(imagePath) {
 	}
 	const result = await session.run(feeds);
 	if (result === undefined) return [];
-	console.log(result);
 	const cpuData = result.output?.data || result.output?.cpuData || result.predictions_sigmoid?.cpuData;
 	const perBatchSize = cpuData.length / imagePath.length;
 	let ans = [];
@@ -119,17 +118,34 @@ module.exports = async function aiTagger(images, imageItems, setTag, config, ove
 	session = await createSession(path.join(__dirname, "..", "..", "models", config.modelPath, "model.onnx"));
 	tagSet = await getCsvData(path.join(__dirname, "..", "..", "models", config.modelPath, "selected_tags.csv"));
 	threshold = config.threshold;
-	console.time("计算时间");
+	let step = config.steps;
+	let imageBatchs = [];
+	let imageItemsBatchs = [];
+	let countStep = 0;
 	for (let i = 0; i < images.length; i++) {
 		console.log(`正在处理第${i + 1}/${images.length}张图片: ${images[i]}`);
-		console.log(imageItems[i].tags);
 		if (overwrite || imageItems[i].tags.length === 0) {
-			const tag = await getTag([images[i]]);
-			await setTag(imageItems[i], tag);
+			imageBatchs.push(images[i]);
+			imageItemsBatchs.push(imageItems[i]);
+			countStep++;
 		} else {
 			window.completeItem.value++;
+			continue;
+		}
+		if (step == countStep) {
+			const tag = await getTag(imageBatchs);
+			await setTag(imageItemsBatchs, tag);
+			countStep = 0;
+			imageBatchs = [];
+			imageItemsBatchs = [];
 		}
 	}
-	console.timeEnd("计算时间");
+	if (countStep > 0) {
+		const tag = await getTag(imageBatchs);
+		await setTag(imageItemsBatchs, tag);
+		countStep = 0;
+		imageBatchs = [];
+		imageItemsBatchs = [];
+	}
 	return true;
 };
