@@ -23,7 +23,7 @@ async function getCsvData(filePath) {
 }
 async function createSession(modelPath) {
 	return ort.InferenceSession.create(modelPath, {
-		executionProviders: [{ name: "dml" }, { name: "cpu" }, { name: "cuda", deviceId: 0 }],
+		executionProviders: [{ name: "dml" }, { name: "coreml" }, { name: "cpu" }],
 		graphOptimizationLevel: "all",
 		executionMode: "parallel",
 	});

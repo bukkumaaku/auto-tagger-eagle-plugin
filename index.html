@@ -7,6 +7,12 @@
 		<script src="js/lib/naiveui.js"></script>
 		<script src="js/utils/tagset.js"></script>
 		<script type="text/javascript" src="js/plugin.js"></script>
+		<style>
+			.questionMark {
+				width: 29px;
+				height: 19px;
+			}
+		</style>
 	</head>
 
 	<body style="background-color: #ffffff">
@@ -39,7 +45,6 @@
 				</n-form-item>
 				<!-- 模型位置 -->
 				<n-form-item label="模型位置" path="modelPath">
-					<!-- <n-input v-model:value="formData.modelPath" placeholder="请输入模型路径" /> -->
 					<n-select v-model:value="formData.modelPath" :options="options" />
 				</n-form-item>
 				<!-- 阈值 -->
@@ -48,24 +53,27 @@
 				</n-form-item>
 				<!-- 步数 -->
 				<n-form-item label="步数" path="steps">
+					<n-tooltip trigger="hover">
+						<template #trigger> <div v-html="questionMark" class="questionMark"></div> </template>
+						每批次处理图片的数量，建议不要太大
+					</n-tooltip>
 					<n-input-number v-model:value="formData.steps" :min="1" :max="10" />
 				</n-form-item>
 				<!-- 过滤标签 -->
 				<n-form-item label="过滤标签" path="filterTags">
 					<n-tooltip trigger="hover">
-						<template #trigger>
-							<n-select
-								filterable
-								multiple
-								tag
-								:show="false"
-								:show-arrow="false"
-								v-model:value="formData.filterTags"
-								placeholder="输入过滤的标签（英语），回车确认"
-							/>
-						</template>
+						<template #trigger> <div v-html="questionMark" class="questionMark"></div> </template>
 						被过滤的标签将不会写入文件的标签组中
 					</n-tooltip>
+					<n-select
+						filterable
+						multiple
+						tag
+						:show="false"
+						:show-arrow="false"
+						v-model:value="formData.filterTags"
+						placeholder="输入过滤的标签（英语），回车确认"
+					/>
 				</n-form-item>
 				<!-- 是否覆写 -->
 				<n-form-item label="是否覆写" path="overwrite">
@@ -73,16 +81,15 @@
 				</n-form-item>
 				<!-- 标签语言选择 -->
 				<n-form-item label="标签语言" path="language">
+					<n-tooltip trigger="hover">
+						<template #trigger> <div v-html="questionMark" class="questionMark"></div> </template>
+						中文和英文标签共存才需要开启分隔符
+					</n-tooltip>
 					<n-radio-group v-model:value="formData.language" name="language">
 						<n-space>
 							<n-radio value="zh">中文</n-radio>
 							<n-radio value="en">英文</n-radio>
-							<n-tooltip trigger="hover">
-								<template #trigger>
-									<n-radio value="mix">中文+英文</n-radio>
-								</template>
-								中文和英文标签共存才需要开启分隔符
-							</n-tooltip>
+							<n-radio value="mix">中文+英文</n-radio>
 						</n-space>
 					</n-radio-group>
 				</n-form-item>
@@ -132,6 +139,19 @@
 						const options = ref([]);
 						const allItem = ref(0);
 						const completeItem = ref(0);
+						const questionMark = ref(`<svg
+								xmlns="http://www.w3.org/2000/svg"
+								xmlns:xlink="http://www.w3.org/1999/xlink"
+								viewBox="0 0 19 19"
+                                style="margin-right:5px;margin-left:5px;margin-top: auto;margin-bottom: auto;width: 19px;height: 19px;"
+							>
+								<g fill="none">
+									<path
+										d="M10 2a8 8 0 1 1 0 16a8 8 0 0 1 0-16zm0 1a7 7 0 1 0 0 14a7 7 0 0 0 0-14zm0 10.5a.75.75 0 1 1 0 1.5a.75.75 0 0 1 0-1.5zm0-8a2.5 2.5 0 0 1 1.651 4.377l-.154.125l-.219.163l-.087.072a1.968 1.968 0 0 0-.156.149c-.339.36-.535.856-.535 1.614a.5.5 0 0 1-1 0c0-1.012.293-1.752.805-2.298a3.11 3.11 0 0 1 .356-.323l.247-.185l.118-.1A1.5 1.5 0 1 0 8.5 8a.5.5 0 0 1-1 .001A2.5 2.5 0 0 1 10 5.5z"
+										fill="currentColor"
+									></path>
+								</g>
+							</svg>`);
 						const handleReFresh = () => {
 							window.location.reload();
 						};
@@ -139,7 +159,16 @@
 						window.formData = formData;
 						window.allItem = allItem;
 						window.completeItem = completeItem;
-						return { formData, handleSubmit, handleReset, options, handleReFresh, allItem, completeItem };
+						return {
+							formData,
+							handleSubmit,
+							handleReset,
+							options,
+							handleReFresh,
+							allItem,
+							completeItem,
+							questionMark,
+						};
 					},
 				})
 					.use(naive)
