@@ -1,11 +1,11 @@
 # Eagle 自动打标插件
 
-📌 为 Eagle 资源库中有缩略图的文件自动生成标签，支持 GPU 加速（directML）和 CPU 回退模式。
+📌 为 Eagle 资源库中有缩略图的文件自动生成标签，支持 GPU 加速（directML、webGPU）和 CPU 回退模式。
 
 ## 功能特性
 
 -   自动为图片/视频文件生成描述性标签
--   优先使用 GPU 加速（支持 DirectML/OpenCL 等非 CUDA 加速）
+-   优先使用 GPU 加速（支持 DirectML/WebGPU 等非 CUDA 加速）
 -   无 GPU 时自动切换至 CPU 模式
 -   支持 WDv2 和 Vitv3 系列模型
 
@@ -14,7 +14,7 @@
 ### 系统要求
 
 -   Windows x86/x64（推荐）
--   macOS/Linux（需手动配置）
+-   macOS（需手动配置）
 -   Eagle v4.0
 
 ### 安装步骤

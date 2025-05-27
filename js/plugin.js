@@ -41,7 +41,7 @@ async function startGetTag(config) {
 		imagePath.push(item.thumbnailPath);
 	});
 	try {
-		const aiTagger = require(__dirname + "\\js\\utils\\ai-tagger.js");
+		const aiTagger = require(__dirname + "/js/utils/ai-tagger.js");
 		await aiTagger(imagePath, window.items, setTag, config, window.formData.value.overwrite);
 	} catch (e) {
 		alert("有部分文件处理失败，请关闭窗口后重试");
@@ -59,11 +59,11 @@ async function startGetTag(config) {
 }
 
 async function getConfig() {
-	return JSON.parse(fs.readFileSync(__dirname + "\\config.json", "utf-8"));
+	return JSON.parse(fs.readFileSync(__dirname + "/config.json", "utf-8"));
 }
 
 async function setConfig(config) {
-	fs.writeFileSync(__dirname + "\\config.json", JSON.stringify(config, null, 2));
+	fs.writeFileSync(__dirname + "/config.json", JSON.stringify(config, null, 2));
 }
 eagle.onPluginCreate(() => {
 	console.log("eagle.onPluginCreate");
@@ -72,7 +72,7 @@ eagle.onPluginCreate(() => {
 eagle.onPluginRun(async () => {
 	is_processing = false;
 	console.log("eagle.onPluginRun");
-	const modelsList = await require(__dirname + "\\js\\utils\\models.js")();
+	const modelsList = await require(__dirname + "/js/utils/models.js")();
 	window.options.value = [];
 	modelsList.forEach((model) => {
 		window.options.value.push({ label: model, value: model });
