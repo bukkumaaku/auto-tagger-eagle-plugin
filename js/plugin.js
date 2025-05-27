@@ -11,6 +11,7 @@ async function wait(ms) {
 async function setTag(imageItems, tagListBatch) {
 	for (let i = 0; i < imageItems.length; i++) {
 		window.completeItem.value++;
+		const originalTags = imageItems[i].tags;
 		const tagList = tagListBatch[i].map((tag) => {
 			if (window.formData.value.language === "zh") if (tagger[tag] !== undefined) return tagger[tag];
 			if (window.formData.value.language === "mix")
@@ -18,6 +19,11 @@ async function setTag(imageItems, tagListBatch) {
 			return tag;
 		});
 		const tagListFiltered = tagList.filter((tag) => !window.formData.value.filterTags.includes(tag));
+		if (window.formData.value.overwrite === "merge") {
+			originalTags.forEach((tag) => {
+				if (!tagListFiltered.includes(tag)) tagListFiltered.push(tag);
+			});
+		}
 		imageItems[i].tags = tagListFiltered;
 		await imageItems[i].save();
 	}
@@ -29,19 +35,26 @@ async function startGetTag(config) {
 		return;
 	}
 	is_processing = true;
-	const items = await eagle.item.getSelected();
+	//let items = await eagle.item.getSelected();
 	const imagePath = [];
-	items.forEach((item) => {
+	window.items.forEach((item) => {
 		imagePath.push(item.thumbnailPath);
 	});
 	try {
 		const aiTagger = require(__dirname + "\\js\\utils\\ai-tagger.js");
-		await aiTagger(imagePath, items, setTag, config, window.formData.value.overwrite);
+		await aiTagger(imagePath, window.items, setTag, config, window.formData.value.overwrite);
 	} catch (e) {
 		alert("有部分文件处理失败，请关闭窗口后重试");
 	}
 	await wait(500);
-	alert("已完成");
+
+	sendNotification.notification.success({ title: "已全部打标结束" });
+	await eagle.notification.show({
+		title: "成功",
+		body: "所有文件已打标完成",
+		mute: false,
+		duration: 3000,
+	});
 	is_processing = false;
 }
 
@@ -64,7 +77,11 @@ eagle.onPluginRun(async () => {
 	modelsList.forEach((model) => {
 		window.options.value.push({ label: model, value: model });
 	});
-	const items = await eagle.item.getSelected();
+	let items = await eagle.item.getSelected();
+	if (items.length === 0) {
+		items = await eagle.item.getAll();
+	}
+	window.items = items;
 	window.allItem.value = items.length;
 	window.completeItem.value = 0;
 });

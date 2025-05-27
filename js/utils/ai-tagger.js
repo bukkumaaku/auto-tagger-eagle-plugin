@@ -23,7 +23,7 @@ async function getCsvData(filePath) {
 }
 async function createSession(modelPath) {
 	return ort.InferenceSession.create(modelPath, {
-		executionProviders: [{ name: "dml" }, { name: "coreml" }, { name: "cpu" }],
+		executionProviders: [{ name: "dml" }, { name: "webgpu" }, { name: "cpu" }],
 		graphOptimizationLevel: "all",
 		executionMode: "parallel",
 	});
@@ -115,6 +115,7 @@ let session, tagSet, threshold;
 
 module.exports = async function aiTagger(images, imageItems, setTag, config, overwrite) {
 	// 计算时间
+	console.time("aiTagger");
 	session = await createSession(path.join(__dirname, "..", "..", "models", config.modelPath, "model.onnx"));
 	tagSet = await getCsvData(path.join(__dirname, "..", "..", "models", config.modelPath, "selected_tags.csv"));
 	threshold = config.threshold;
@@ -124,7 +125,7 @@ module.exports = async function aiTagger(images, imageItems, setTag, config, ove
 	let countStep = 0;
 	for (let i = 0; i < images.length; i++) {
 		console.log(`正在处理第${i + 1}/${images.length}张图片: ${images[i]}`);
-		if (overwrite || imageItems[i].tags.length === 0) {
+		if (overwrite !== "nocover" || imageItems[i].tags.length === 0) {
 			imageBatchs.push(images[i]);
 			imageItemsBatchs.push(imageItems[i]);
 			countStep++;
@@ -147,5 +148,6 @@ module.exports = async function aiTagger(images, imageItems, setTag, config, ove
 		imageBatchs = [];
 		imageItemsBatchs = [];
 	}
+	console.timeEnd("aiTagger");
 	return true;
 };

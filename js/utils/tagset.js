@@ -93920,7 +93920,7 @@ const tagger = {
 	cub: "幼兽",
 	pub: "酒吧",
 	cqc: "近战格斗",
-	orc: "兽人",
+	orc: "绿皮兽人",
 	lid: "盖子",
 	rpd: "RPD机枪",
 	lsd: "迷幻的",

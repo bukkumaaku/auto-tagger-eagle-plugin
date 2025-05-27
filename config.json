@@ -6,9 +6,14 @@
     "1boy",
     "1个男孩",
     "1girl",
-    "1个女孩"
+    "1个女孩",
+    "solo",
+    "单人",
+    "多人",
+    "duo",
+    "聚焦男性"
   ],
-  "overwrite": true,
+  "overwrite": "nocover",
   "language": "zh",
-  "splitter": " "
+  "splitter": "|"
 }
