@@ -23,7 +23,7 @@ async function getCsvData(filePath) {
 }
 async function createSession(modelPath) {
 	return ort.InferenceSession.create(modelPath, {
-		executionProviders: [{ name: "dml" }, { name: "webgpu" }, { name: "cpu" }],
+		executionProviders: [{ name: eagle.os.type() === "Windows_NT" ? "dml" : "webgpu" }, { name: "cpu" }],
 		graphOptimizationLevel: "all",
 		executionMode: "parallel",
 	});
