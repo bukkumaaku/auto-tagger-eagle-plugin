@@ -11,6 +11,7 @@
 		"serviceMode": true,
 		"url": "index.html",
 		"width": 640,
-		"height": 580
+		"height": 620,
+		"frame": false
 	}
 }

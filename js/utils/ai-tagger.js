@@ -23,7 +23,14 @@ async function getCsvData(filePath) {
 }
 async function createSession(modelPath) {
 	return ort.InferenceSession.create(modelPath, {
-		executionProviders: [{ name: eagle.os.type() === "Windows_NT" ? "dml" : "webgpu" }, { name: "cpu" }],
+		executionProviders: [
+			{
+				name: eagle.os.type() === "Windows_NT" ? "dml" : "webgpu",
+			},
+			{
+				name: "cpu",
+			},
+		],
 		graphOptimizationLevel: "all",
 		executionMode: "parallel",
 	});
@@ -87,6 +94,7 @@ async function getTag(imagePath) {
 		concatenatedData.set(tensor.data, offset);
 		offset += tensor.data.length;
 	}
+	// 运行模型
 	const batchTensor = new ort.Tensor("float32", concatenatedData, [imagePath.length, sizeSetting, sizeSetting, 3]);
 	const feeds = {};
 	if (session.inputNames[0]) {

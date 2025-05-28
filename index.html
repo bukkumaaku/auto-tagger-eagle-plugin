@@ -6,191 +6,194 @@
 		<script src="js/lib/vue.global.js"></script>
 		<script src="js/lib/naiveui.js"></script>
 		<script src="js/utils/tagset.js"></script>
+		<script src="js/utils/tool.js"></script>
 		<script src="js/plugin.js"></script>
 		<style>
 			.questionMark {
-				width: 29px;
+				width: 19px;
 				height: 19px;
+				margin-right: 5px;
+			}
+			body {
+				display: flex;
+				justify-content: center;
+				align-items: center;
+				min-height: 100vh;
+				margin: 0;
+			}
+			#app {
+				width: 90%;
+				height: fit-content;
+			}
+			@media (max-width: 800px) {
+				#app {
+					max-width: 600px;
+				}
 			}
 		</style>
 	</head>
 
-	<body style="background-color: #ffffff">
-		<div
-			id="app"
-			style="
-				width: 600px;
-				margin: auto auto;
-				position: absolute;
-				top: 0;
-				bottom: 0;
-				left: 0;
-				right: 0;
-				height: fit-content;
-			"
-		>
-			<n-form
-				:model="formData"
-				label-placement="left"
-				label-width="auto"
-				style="max-width: 500px; margin: auto auto; position: relative"
-			>
-				<n-form-item label="进度" path="modelName">
-					<span>{{ allItem }}/{{ completeItem }}</span> &nbsp;&nbsp;
-					<n-progress
-						type="line"
-						:percentage="Number((completeItem / allItem * 100).toFixed(2))"
-						indicator-placement="inside"
-					/>
-				</n-form-item>
-				<!-- 模型位置 -->
-				<n-form-item label="模型位置" path="modelPath">
-					<n-select v-model:value="formData.modelPath" :options="options" />
-				</n-form-item>
-				<!-- 阈值 -->
-				<n-form-item label="阈值" path="threshold">
-					<n-input-number v-model:value="formData.threshold" :min="0" :max="1" :step="0.01" />
-				</n-form-item>
-				<!-- 步数 -->
-				<n-form-item label="步数" path="steps">
-					<n-tooltip trigger="hover">
-						<template #trigger> <div v-html="questionMark" class="questionMark"></div> </template>
-						每批次处理图片的数量，建议不要太大
-					</n-tooltip>
-					<n-input-number v-model:value="formData.steps" :min="1" :max="10" />
-				</n-form-item>
-				<!-- 过滤标签 -->
-				<n-form-item label="过滤标签" path="filterTags">
-					<n-tooltip trigger="hover">
-						<template #trigger> <div v-html="questionMark" class="questionMark"></div> </template>
-						被过滤的标签将不会写入文件的标签组中
-					</n-tooltip>
-					<n-select
-						filterable
-						multiple
-						tag
-						:show="false"
-						:show-arrow="false"
-						v-model:value="formData.filterTags"
-						placeholder="输入过滤的标签（英语），回车确认"
-					/>
-				</n-form-item>
-				<!-- 是否覆写 -->
-				<n-form-item label="是否覆写" path="overwrite">
-					<n-tooltip trigger="hover">
-						<template #trigger> <div v-html="questionMark" class="questionMark"></div> </template>
-						不覆写：若是有标签则不进行覆写<br />
-						覆写：若是有标签则进行覆写<br />
-						合并：若是有标签则进行合并
-					</n-tooltip>
-					<n-radio-group v-model:value="formData.overwrite" name="overwrite">
-						<n-space>
-							<n-radio value="nocover">不覆写</n-radio>
-							<n-radio value="cover">覆写</n-radio>
-							<n-radio value="merge">合并</n-radio>
-						</n-space>
-					</n-radio-group>
-				</n-form-item>
-				<!-- 标签语言选择 -->
-				<n-form-item label="标签语言" path="language">
-					<n-tooltip trigger="hover">
-						<template #trigger> <div v-html="questionMark" class="questionMark"></div> </template>
-						中文和英文标签共存才需要开启分隔符
-					</n-tooltip>
-					<n-radio-group v-model:value="formData.language" name="language">
-						<n-space>
-							<n-radio value="zh">中文</n-radio>
-							<n-radio value="en">英文</n-radio>
-							<n-radio value="mix">中文+英文</n-radio>
-						</n-space>
-					</n-radio-group>
-				</n-form-item>
-				<!-- 分隔符 -->
-				<n-form-item label="分隔符" path="splitter">
-					<n-input
-						v-model:value="formData.splitter"
-						:placeholder="formData.language === 'mix' ? '请输入分隔符' : '中文和英文标签共存才需要开启分隔符'"
-						:disabled="formData.language !== 'mix'"
-					/>
-				</n-form-item>
-				<!-- 操作按钮 -->
-				<div style="display: flex; gap: 10px; justify-content: flex-end">
-					<n-button type="primary" @click="handleSubmit">确定</n-button>
-					<n-button @click="handleReset">恢复默认</n-button>
-					<!-- <n-button @click="handleReFresh">刷新</n-button> -->
-				</div>
-			</n-form>
+	<body>
+		<div id="app">
+			<n-config-provider :theme="theme">
+				<n-space
+					justify="end"
+					style="
+						width: 100%;
+						height: 30px;
+						position: fixed;
+						top: 0px;
+						left: 0px;
+						-webkit-app-region: drag;
+						z-index: 10000;
+					"
+				>
+					<!-- 最小化和关闭按钮 -->
+					<n-button @click="handleMinimize" size="small" type="text" style="-webkit-app-region: no-drag">
+						<img src="./images/min.png" style="width: 18px; height: 18px" />
+					</n-button>
+					<n-button @click="handleClose" size="small" type="text" style="-webkit-app-region: no-drag">
+						<img src="./images/close.png" style="width: 18px; height: 18px" />
+					</n-button>
+				</n-space>
+				<n-divider style="position: fixed; top: 5px; left: 0px; width: 100%"></n-divider>
+				<n-form
+					:model="formData"
+					label-placement="left"
+					label-width="auto"
+					style="width: fit-content; margin: auto auto; position: relative"
+				>
+					<n-form-item label="进度" path="modelName">
+						<n-thing>{{ allItem }}/{{ completeItem }}</n-thing> &nbsp;&nbsp;
+						<n-progress
+							type="line"
+							:percentage="Number((completeItem / allItem * 100).toFixed(2))"
+							indicator-placement="inside"
+						/>
+					</n-form-item>
+					<!-- 模型位置 -->
+					<n-form-item label="模型位置" path="modelPath">
+						<n-select v-model:value="formData.modelPath" :options="options" />
+					</n-form-item>
+					<!-- 阈值 -->
+					<n-form-item label="阈值" path="threshold">
+						<n-input-number v-model:value="formData.threshold" :min="0" :max="1" :step="0.01" />
+					</n-form-item>
+					<!-- 步数 -->
+					<n-form-item label="步数" path="steps">
+						<n-tooltip trigger="hover">
+							<template #trigger> <div v-html="questionMark" class="questionMark"></div> </template>
+							每批次处理图片的数量，建议不要太大
+						</n-tooltip>
+						<n-input-number v-model:value="formData.steps" :min="1" :max="40" />
+					</n-form-item>
+					<!-- 过滤标签 -->
+					<n-form-item label="过滤标签" path="filterTags">
+						<n-tooltip trigger="hover">
+							<template #trigger> <div v-html="questionMark" class="questionMark"></div> </template>
+							被过滤的标签将不会写入文件的标签组中
+						</n-tooltip>
+						<n-select
+							filterable
+							multiple
+							tag
+							:show="false"
+							:show-arrow="false"
+							v-model:value="formData.filterTags"
+							placeholder="输入过滤的标签（英语），回车确认"
+						/>
+					</n-form-item>
+					<!-- 是否覆写 -->
+					<n-form-item label="是否覆写" path="overwrite">
+						<n-tooltip trigger="hover">
+							<template #trigger> <div v-html="questionMark" class="questionMark"></div> </template>
+							不覆写：若是有标签则不进行覆写<br />
+							覆写：若是有标签则进行覆写<br />
+							合并：若是有标签则进行合并
+						</n-tooltip>
+						<n-radio-group v-model:value="formData.overwrite" name="overwrite">
+							<n-space>
+								<n-radio value="nocover">不覆写</n-radio>
+								<n-radio value="cover">覆写</n-radio>
+								<n-radio value="merge">合并</n-radio>
+							</n-space>
+						</n-radio-group>
+					</n-form-item>
+					<!-- 标签语言选择 -->
+					<n-form-item label="标签语言" path="language">
+						<n-radio-group v-model:value="formData.language" name="language">
+							<n-space>
+								<n-radio value="zh">中文</n-radio>
+								<n-radio value="en">英文</n-radio>
+								<n-radio value="mix">中文+英文</n-radio>
+							</n-space>
+						</n-radio-group>
+					</n-form-item>
+					<!-- 分隔符 -->
+					<n-form-item label="分隔符" path="splitter">
+						<n-tooltip trigger="hover">
+							<template #trigger> <div v-html="questionMark" class="questionMark"></div> </template>
+							中文和英文标签共存才需要开启分隔符
+						</n-tooltip>
+						<n-input
+							v-model:value="formData.splitter"
+							:placeholder="formData.language === 'mix' ? '请输入分隔符' : '中文和英文标签共存才需要开启分隔符'"
+							:disabled="formData.language !== 'mix'"
+						/>
+					</n-form-item>
+					<!-- 操作按钮 -->
+					<div style="display: flex; gap: 10px; justify-content: flex-end">
+						<n-button type="primary" @click="handleSubmit">确定</n-button>
+						<n-button @click="handleReset">恢复默认</n-button>
+					</div>
+				</n-form>
+			</n-config-provider>
 		</div>
 		<script>
 			const { createApp, ref } = Vue;
-
+			// 引用通知组件
 			const sendNotification = naive.createDiscreteApi(["notification"]);
 
 			let config = {};
 			async function main() {
+				// 获取配置
 				config = await getConfig();
 				const originalConfig = JSON.parse(JSON.stringify(config));
 				createApp({
 					setup() {
+						const theme = naive.darkTheme;
 						const formData = ref(config);
 						// 提交处理
 						const handleSubmit = async () => {
 							if (formData.value.modelPath === "") {
-								sendNotification.notification.error({ title: "请选择模型路径", duration: 3000 });
-								await eagle.notification.show({
-									title: "错误",
-									body: "请选择模型路径",
-									mute: false,
-									duration: 3000,
-								});
+								notification("请选择模型路径");
 								return;
 							}
-
 							if (is_processing) {
-								sendNotification.notification.info({
-									title: "仍有任务正在进行中，请等待",
-									duration: 3000,
-								});
-								await eagle.notification.show({
-									title: "注意",
-									body: "仍有任务正在进行中，请等待",
-									mute: false,
-									duration: 3000,
-								});
-								return;
+								notification("仍有任务正在进行中，请等待");
 								return;
 							}
 							is_processing = true;
 							await initialize();
-							await wait(1000);
+							await wait(500);
 							config = formData.value;
 							await setConfig(config);
-							console.log("提交数据:", formData.value);
 							await startGetTag(config);
 						};
 						// 重置表单
 						const handleReset = () => {
 							formData.value = originalConfig;
 						};
+						const handleMinimize = async () => {
+							await eagle.window.minimize();
+						};
+						const handleClose = async () => {
+							await eagle.window.hide();
+						};
 						const options = ref([]);
 						const allItem = ref(0);
 						const completeItem = ref(0);
-						const questionMark = ref(`<svg
-								xmlns="http://www.w3.org/2000/svg"
-								xmlns:xlink="http://www.w3.org/1999/xlink"
-								viewBox="0 0 19 19"
-			                             style="margin-right:5px;margin-left:5px;margin-top: auto;margin-bottom: auto;width: 19px;height: 19px;"
-							>
-								<g fill="none">
-									<path
-										d="M10 2a8 8 0 1 1 0 16a8 8 0 0 1 0-16zm0 1a7 7 0 1 0 0 14a7 7 0 0 0 0-14zm0 10.5a.75.75 0 1 1 0 1.5a.75.75 0 0 1 0-1.5zm0-8a2.5 2.5 0 0 1 1.651 4.377l-.154.125l-.219.163l-.087.072a1.968 1.968 0 0 0-.156.149c-.339.36-.535.856-.535 1.614a.5.5 0 0 1-1 0c0-1.012.293-1.752.805-2.298a3.11 3.11 0 0 1 .356-.323l.247-.185l.118-.1A1.5 1.5 0 1 0 8.5 8a.5.5 0 0 1-1 .001A2.5 2.5 0 0 1 10 5.5z"
-										fill="currentColor"
-									></path>
-								</g>
-							</svg>`);
-						const handleReFresh = () => {
-							window.location.reload();
-						};
+						const questionMark = ref(`<img src="./images/img.icons8.png" class="questionMark">`);
 						window.options = options;
 						window.formData = formData;
 						window.allItem = allItem;
@@ -200,10 +203,12 @@
 							handleSubmit,
 							handleReset,
 							options,
-							handleReFresh,
 							allItem,
 							completeItem,
 							questionMark,
+							theme,
+							handleClose,
+							handleMinimize,
 						};
 					},
 				})
@@ -211,9 +216,6 @@
 					.mount("#app");
 			}
 			main();
-
-			//import * as aiTagger from "@/assets/index.js";
-			// 表单数据
 		</script>
 	</body>
 </html>

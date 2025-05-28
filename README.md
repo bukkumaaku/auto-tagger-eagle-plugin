@@ -22,18 +22,19 @@
 1. **Windows 用户**
 
     ```powershell
+    git clone https://github.com/bukkumaaku/auto-tagger-eagle-plugin.git
+    cd auto-tagger-eagle-plugin
     # 右键以管理员身份运行
     .\install.ps1
     ```
 
-2. **其他系统用户**
+2. **手动安装**
 
     ```bash
-    # 1. 安装 Bun.js (https://bun.sh)
-    curl -fsSL https://bun.sh/install | bash
-
-    # 2. 安装依赖
-    cd 插件路径
+    git clone https://github.com/bukkumaaku/auto-tagger-eagle-plugin.git
+    cd auto-tagger-eagle-plugin
+    # 安装bunjs, mac用户系统自带npm, windows用户需要预先安装npm
+    npm install bun -g
     bun install
     ```
 

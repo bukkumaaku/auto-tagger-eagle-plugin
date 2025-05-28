@@ -1,7 +1,7 @@
 {
   "modelPath": "SmilingWolf-wd-vit-tagger-v3",
   "threshold": 0.25,
-  "steps": 4,
+  "steps": 10,
   "filterTags": [
     "1boy",
     "1个男孩",
@@ -15,5 +15,5 @@
   ],
   "overwrite": "cover",
   "language": "zh",
-  "splitter": "|"
+  "splitter": "/"
 }
