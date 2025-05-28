@@ -13,7 +13,7 @@
     "duo",
     "聚焦男性"
   ],
-  "overwrite": "nocover",
+  "overwrite": "cover",
   "language": "zh",
   "splitter": "|"
 }

@@ -30,11 +30,6 @@ async function setTag(imageItems, tagListBatch) {
 }
 
 async function startGetTag(config) {
-	if (is_processing) {
-		console.log("Please wait for the previous process to complete.");
-		return;
-	}
-	is_processing = true;
 	//let items = await eagle.item.getSelected();
 	const imagePath = [];
 	window.items.forEach((item) => {
@@ -48,7 +43,7 @@ async function startGetTag(config) {
 	}
 	await wait(500);
 
-	sendNotification.notification.success({ title: "已全部打标结束" });
+	sendNotification.notification.success({ title: "已全部打标结束", duration: 3000 });
 	await eagle.notification.show({
 		title: "成功",
 		body: "所有文件已打标完成",
@@ -56,6 +51,16 @@ async function startGetTag(config) {
 		duration: 3000,
 	});
 	is_processing = false;
+}
+
+async function initialize() {
+	let items = await eagle.item.getSelected();
+	if (items.length === 0) {
+		items = await eagle.item.getAll();
+	}
+	window.items = items;
+	window.allItem.value = items.length;
+	window.completeItem.value = 0;
 }
 
 async function getConfig() {
@@ -70,20 +75,13 @@ eagle.onPluginCreate(() => {
 });
 
 eagle.onPluginRun(async () => {
-	is_processing = false;
 	console.log("eagle.onPluginRun");
 	const modelsList = await require(__dirname + "/js/utils/models.js")();
 	window.options.value = [];
 	modelsList.forEach((model) => {
 		window.options.value.push({ label: model, value: model });
 	});
-	let items = await eagle.item.getSelected();
-	if (items.length === 0) {
-		items = await eagle.item.getAll();
-	}
-	window.items = items;
-	window.allItem.value = items.length;
-	window.completeItem.value = 0;
+	await initialize();
 });
 
 eagle.onPluginShow(async () => {
@@ -92,7 +90,6 @@ eagle.onPluginShow(async () => {
 
 eagle.onPluginHide(() => {
 	console.log("eagle.onPluginHide");
-	is_processing = false;
 });
 
 eagle.onPluginBeforeExit(() => {

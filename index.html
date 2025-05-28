@@ -136,7 +136,7 @@
 						// 提交处理
 						const handleSubmit = async () => {
 							if (formData.value.modelPath === "") {
-								sendNotification.notification.error({ title: "请选择模型路径" });
+								sendNotification.notification.error({ title: "请选择模型路径", duration: 3000 });
 								await eagle.notification.show({
 									title: "错误",
 									body: "请选择模型路径",
@@ -145,17 +145,24 @@
 								});
 								return;
 							}
-							if (allItem.value === completeItem.value) {
-								//alert("所有文件已打标完成");
-								sendNotification.notification.info({ title: "所有文件已打标完成" });
+
+							if (is_processing) {
+								sendNotification.notification.info({
+									title: "仍有任务正在进行中，请等待",
+									duration: 3000,
+								});
 								await eagle.notification.show({
-									title: "成功",
-									body: "所有文件已打标完成",
+									title: "注意",
+									body: "仍有任务正在进行中，请等待",
 									mute: false,
 									duration: 3000,
 								});
 								return;
+								return;
 							}
+							is_processing = true;
+							await initialize();
+							await wait(1000);
 							config = formData.value;
 							await setConfig(config);
 							console.log("提交数据:", formData.value);
