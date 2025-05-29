@@ -1,70 +1,32 @@
-﻿<#
-.SYNOPSIS
-下载并安装Bun及其依赖
+﻿# install.ps1
+# 需要管理员权限运行
 
-.DESCRIPTION
-1. 从GitHub下载Bun的Windows版压缩包
-2. 解压到当前目录的bun子文件夹
-3. 使用解压的bun.exe执行安装命令
-#>
+Write-Host "`n=== 开始安装 Auto Tagger 插件 ===`n" -ForegroundColor Cyan
 
-# 配置参数
-$downloadUrl = "https://github.com/oven-sh/bun/releases/download/bun-v1.2.14/bun-windows-x64.zip"
-$zipFileName = "bun-windows-x64.zip"
-$extractFolder = "bun"
 
 try {
-    # 获取当前工作目录
-    $workingDir = $PWD.Path
-
-    # 构造完整路径
-    $zipPath = Join-Path $workingDir $zipFileName
-    $extractPath = Join-Path $workingDir $extractFolder
-
-    # 步骤1: 下载压缩包
-    Write-Host "正在下载 Bun..."
-    Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath -UseBasicParsing
-
-    # 检查下载是否成功
-    if (-not (Test-Path $zipPath)) {
-        throw "下载失败，文件未找到"
+    # 安装 Bun 运行时
+    Write-Host "[1/2] 正在安装 Bun 运行时..." -ForegroundColor Yellow
+    powershell -c "irm bun.sh/install.ps1 | iex"
+    
+    if (-not $?) {
+        throw "Bun 安装失败，请手动执行：powershell -c `"irm bun.sh/install.ps1|iex`""
     }
+    Write-Host "√ Bun 安装成功`n" -ForegroundColor Green
 
-    # 步骤2: 解压文件
-    Write-Host "正在解压到 $extractPath..."
-    if (Test-Path $extractPath) {
-        Write-Host "检测到已存在目录，执行清理..."
-        Remove-Item $extractPath -Recurse -Force
+    # 安装项目依赖
+    Write-Host "[2/2] 正在安装项目依赖..." -ForegroundColor Yellow
+    bun install
+    
+    if (-not $?) {
+        throw "依赖安装失败，请检查网络连接后重试"
     }
-    Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
+    Write-Host "√ 依赖安装成功`n" -ForegroundColor Green
 
-    # 步骤3: 验证可执行文件
-    $bunExe = Join-Path $extractPath "bun-windows-x64\\bun.exe"
-    if (-not (Test-Path $bunExe)) {
-        throw "解压失败，未找到 bun.exe"
-    }
-
-    # 步骤4: 执行安装命令
-    Write-Host "开始执行 bun install..."
-    & $bunExe install
-
-    # 检查执行结果
-    if ($LASTEXITCODE -ne 0) {
-        throw "bun install 执行失败 (退出码: $LASTEXITCODE)"
-    }
-
-    Write-Host "`n操作成功完成！" -ForegroundColor Green
 }
 catch {
-    Write-Host "`n发生错误: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "`n错误：$_" -ForegroundColor Red
     exit 1
 }
-finally {
-    # 可选：清理压缩包
-    # if (Test-Path $zipPath) { Remove-Item $zipPath }
-}
 
-# 使用说明提示
-Write-Host "`n后续使用建议："
-Write-Host "1. 添加Bun到环境变量: `$env:Path += `";$extractPath`""
-Write-Host "2. 验证安装: bun --version"
+Write-Host "=== 安装完成！ ===" -ForegroundColor Cyan

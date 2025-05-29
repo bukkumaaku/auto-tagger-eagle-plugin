@@ -17,26 +17,44 @@
 -   macOS（需手动配置）
 -   Eagle v4.0
 
-### 安装步骤
+## 安装方法
 
-1. **Windows 用户**
+### 快速安装（推荐）
 
-    ```powershell
-    git clone https://github.com/bukkumaaku/auto-tagger-eagle-plugin.git
-    cd auto-tagger-eagle-plugin
-    # 右键以管理员身份运行
-    .\install.ps1
-    ```
+```bash
+git clone https://github.com/bukkumaaku/auto-tagger-eagle-plugin.git
+cd auto-tagger-eagle-plugin
+```
 
-2. **手动安装**
+▸ **Windows 用户**
+右键点击 `install.ps1` 选择「以管理员身份运行」
 
-    ```bash
-    git clone https://github.com/bukkumaaku/auto-tagger-eagle-plugin.git
-    cd auto-tagger-eagle-plugin
-    # 安装bunjs, mac用户系统自带npm, windows用户需要预先安装npm
-    npm install bun -g
-    bun install
-    ```
+▸ **Mac 用户**
+双击运行 `install.command`（首次运行需在终端执行授权：`chmod +x install.command`）
+
+### 手动安装
+
+#### 1. 克隆仓库
+
+```bash
+git clone https://github.com/bukkumaaku/auto-tagger-eagle-plugin.git
+cd auto-tagger-eagle-plugin
+```
+
+#### 2. 环境准备
+
+```bash
+# 安装 Bun 运行时（需预先配置 npm）
+npm install bun -g
+
+# 安装项目依赖
+bun install
+```
+
+#### 系统特定说明
+
+-   **Windows**：需提前安装 [Node.js](https://nodejs.org) 以获得 npm 环境
+-   **Mac**：自带 npm 环境，若提示权限错误可在命令前加 `sudo`
 
 ## 模型配置
 
