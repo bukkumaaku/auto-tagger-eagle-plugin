@@ -52,10 +52,9 @@ async function startGetTag(config) {
 		await notification("正在加载模型，请稍候...");
 		await aiTagger(imagePath, window.items, setTag, config);
 	} catch (e) {
-		alert("有部分文件处理失败，请关闭窗口后重试");
+		alert("有部分文件处理失败，请关闭窗口或者调低批次大小后重试");
 		console.error(e);
 	}
-	await wait(500);
 	await notification("所有文件已打标完成");
 	is_processing = false;
 }
