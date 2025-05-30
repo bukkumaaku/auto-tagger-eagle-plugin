@@ -49,12 +49,14 @@ async function startGetTag(config) {
 	});
 	try {
 		const aiTagger = require(__dirname + "/js/utils/ai-tagger.js");
-		await aiTagger(imagePath, window.items, setTag, config, window.formData.value.overwrite);
+		await notification("正在加载模型，请稍候...");
+		await aiTagger(imagePath, window.items, setTag, config);
 	} catch (e) {
 		alert("有部分文件处理失败，请关闭窗口后重试");
+		console.error(e);
 	}
 	await wait(500);
-	notification("所有文件已打标完成");
+	await notification("所有文件已打标完成");
 	is_processing = false;
 }
 

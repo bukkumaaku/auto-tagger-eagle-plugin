@@ -23,3 +23,10 @@ eagle.onPluginHide(() => {
 eagle.onPluginBeforeExit(() => {
 	console.log("eagle.onPluginBeforeExit");
 });
+document.addEventListener("keydown", async (e) => {
+	// 监听ctrl+w
+	if (e.ctrlKey && e.key === "w") {
+		e.preventDefault();
+		await eagle.window.hide();
+	}
+});

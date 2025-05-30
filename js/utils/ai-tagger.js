@@ -22,17 +22,29 @@ async function getCsvData(filePath) {
 	return csvData;
 }
 async function createSession(modelPath) {
+	const executionProviders = [];
+	if (eagle.os.type() === "Windows_NT") {
+		executionProviders.push({
+			name: "dml",
+		});
+	} else {
+		/* executionProviders.push({
+			name: "coreml",
+			coreMlFlags: 0x004 | 0x002 | 0x010 | 0x020,
+		}); */
+		executionProviders.push({
+			name: "webgpu",
+		});
+	}
+	executionProviders.push({
+		name: "cpu",
+	});
 	return ort.InferenceSession.create(modelPath, {
-		executionProviders: [
-			{
-				name: eagle.os.type() === "Windows_NT" ? "dml" : "webgpu",
-			},
-			{
-				name: "cpu",
-			},
-		],
+		executionProviders: executionProviders,
 		graphOptimizationLevel: "all",
 		executionMode: "parallel",
+		enableCpuMemArena: true,
+		enableMemPattern: true,
 	});
 }
 
@@ -74,7 +86,7 @@ async function runInference(imagePath) {
 	}
 	return results;
 }
-async function getTag(imagePath) {
+async function getTag(imagePath, session, tagSet, threshold) {
 	const results = await runInference(imagePath);
 	let resultsLength = results.length;
 	if (results[0]?.data === undefined) return [];
@@ -119,21 +131,19 @@ async function getTag(imagePath) {
 
 // 读取json文件
 const sizeSetting = 448;
-let session, tagSet, threshold;
 
-module.exports = async function aiTagger(images, imageItems, setTag, config, overwrite) {
+module.exports = async function aiTagger(images, imageItems, setTag, config) {
 	// 计算时间
 	console.time("aiTagger");
-	session = await createSession(path.join(__dirname, "..", "..", "models", config.modelPath, "model.onnx"));
-	tagSet = await getCsvData(path.join(__dirname, "..", "..", "models", config.modelPath, "selected_tags.csv"));
-	threshold = config.threshold;
+	const session = await createSession(path.join(__dirname, "..", "..", "models", config.modelPath, "model.onnx"));
+	const tagSet = await getCsvData(path.join(__dirname, "..", "..", "models", config.modelPath, "selected_tags.csv"));
 	let step = config.steps;
 	let imageBatchs = [];
 	let imageItemsBatchs = [];
 	let countStep = 0;
 	for (let i = 0; i < images.length; i++) {
 		console.log(`正在处理第${i + 1}/${images.length}张图片: ${images[i]}`);
-		if (overwrite !== "nocover" || imageItems[i].tags.length === 0) {
+		if (config.overwrite !== "nocover" || imageItems[i].tags.length === 0) {
 			imageBatchs.push(images[i]);
 			imageItemsBatchs.push(imageItems[i]);
 			countStep++;
@@ -142,7 +152,7 @@ module.exports = async function aiTagger(images, imageItems, setTag, config, ove
 			continue;
 		}
 		if (step == countStep) {
-			const tag = await getTag(imageBatchs);
+			const tag = await getTag(imageBatchs, session, tagSet, config.threshold);
 			await setTag(imageItemsBatchs, tag);
 			countStep = 0;
 			imageBatchs = [];
@@ -150,7 +160,7 @@ module.exports = async function aiTagger(images, imageItems, setTag, config, ove
 		}
 	}
 	if (countStep > 0) {
-		const tag = await getTag(imageBatchs);
+		const tag = await getTag(imageBatchs, session, tagSet, config.threshold);
 		await setTag(imageItemsBatchs, tag);
 		countStep = 0;
 		imageBatchs = [];

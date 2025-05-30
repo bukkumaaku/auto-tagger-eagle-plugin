@@ -76,11 +76,17 @@
 						<n-select v-model:value="formData.modelPath" :options="options" />
 					</n-form-item>
 					<!-- 阈值 -->
-					<n-form-item label="阈值" path="threshold">
+					<n-form-item label="阈值" path="threshold"
+						><n-tooltip trigger="hover">
+							<template #trigger> <div v-html="questionMark" class="questionMark"></div> </template>
+							阈值越高，标签越少，但是标签准确率高
+							<br />
+							阈值越低，标签越多，但是标签准确率低
+						</n-tooltip>
 						<n-input-number v-model:value="formData.threshold" :min="0" :max="1" :step="0.01" />
 					</n-form-item>
 					<!-- 步数 -->
-					<n-form-item label="步数" path="steps">
+					<n-form-item label="批次大小" path="steps">
 						<n-tooltip trigger="hover">
 							<template #trigger> <div v-html="questionMark" class="questionMark"></div> </template>
 							每批次处理图片的数量，建议不要太大
@@ -107,9 +113,9 @@
 					<n-form-item label="是否覆写" path="overwrite">
 						<n-tooltip trigger="hover">
 							<template #trigger> <div v-html="questionMark" class="questionMark"></div> </template>
-							不覆写：若是有标签则不进行覆写<br />
-							覆写：若是有标签则进行覆写<br />
-							合并：若是有标签则进行合并
+							不覆写：直接跳过有标签文件（若大量文件已有标签，速度最快）<br />
+							覆写：若是有标签则进行覆写（时间消耗较高）<br />
+							合并：若是有标签则进行合并（时间消耗最高）
 						</n-tooltip>
 						<n-radio-group v-model:value="formData.overwrite" name="overwrite">
 							<n-space>

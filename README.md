@@ -27,7 +27,7 @@ cd auto-tagger-eagle-plugin
 ```
 
 ▸ **Windows 用户**
-右键点击 `install.ps1` 选择「以管理员身份运行」
+右键点击 `install.ps1` 选择「使用 PowerShell 运行」
 
 ▸ **Mac 用户**
 双击运行 `install.command`（首次运行需在终端执行授权：`chmod +x install.command`）
