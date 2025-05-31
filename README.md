@@ -27,7 +27,9 @@ cd auto-tagger-eagle-plugin
 ```
 
 ▸ **Windows 用户**
-右键点击 `install.ps1` 选择「使用 PowerShell 运行」
+
+-   安装[nodejs](https://nodejs.org/zh-cn/download)
+-   双击运行 `install.bat`
 
 ▸ **Mac 用户**
 双击运行 `install.command`（首次运行需在终端执行授权：`chmod +x install.command`）
@@ -44,11 +46,8 @@ cd auto-tagger-eagle-plugin
 #### 2. 环境准备
 
 ```bash
-# 安装 Bun 运行时（需预先配置 npm）
-npm install bun -g
-
 # 安装项目依赖
-bun install
+npm install --registry https://registry.npmirror.com
 ```
 
 #### 系统特定说明
@@ -76,15 +75,14 @@ bun install
 ### 目录结构
 
 ```
-eagle-plugins/
-└── auto-tagger/
-    └── models/
-        ├── wd-v1-4-moat-tagger-v2/
-        │   ├── model.onnx
-        │   └── selected_tags.csv
-        └── wd-vit-tagger-v3/
-            ├── model.onnx
-            └── selected_tags.csv
+auto-tagger-eagle-plugin/
+└── models/
+    ├── wd-v1-4-moat-tagger-v2/
+    │   ├── model.onnx
+    │   └── selected_tags.csv
+    └── wd-vit-tagger-v3/
+        ├── model.onnx
+        └── selected_tags.csv
 ```
 
 ## 使用说明
