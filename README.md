@@ -47,7 +47,7 @@ cd auto-tagger-eagle-plugin
 
 ```bash
 # 安装项目依赖
-npm install --registry https://registry.npmirror.com
+npm install --registry https://registry.npmmirror.com
 ```
 
 #### 系统特定说明

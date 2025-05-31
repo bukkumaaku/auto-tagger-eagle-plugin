@@ -1,1 +1,1 @@
-npm install --registry https://registry.npmirror.com
+npm install --registry https://registry.npmmirror.com
