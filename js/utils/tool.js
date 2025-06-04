@@ -23,17 +23,22 @@ async function setTag(imageItems, tagListBatch) {
 	// 打标签
 	for (let i = 0; i < imageItems.length; i++) {
 		window.completeItem.value++;
-		const originalTags = imageItems[i].tags;
 		const tagList = tagListBatch[i].map((tag) => {
+			if (
+				window.formData.value.filterTags.includes(tag) ||
+				window.formData.value.filterTags.includes(tagger[tag])
+			) {
+				return "";
+			}
 			if (window.formData.value.language === "zh") {
 				if (tagger[tag] !== undefined) return tagger[tag];
-			} else if (window.formData.value.language === "mix" && !window.formData.value.filterTags.includes(tag))
+			} else if (window.formData.value.language === "mix")
 				if (tagger[tag] !== undefined) return `${tagger[tag]}${window.formData.value.splitter}${tag}`;
 			return tag;
 		});
-		const tagListFiltered = tagList.filter((tag) => !window.formData.value.filterTags.includes(tag));
+		const tagListFiltered = tagList.filter(tag != "" && tag != null && tag != undefined);
 		if (window.formData.value.overwrite === "merge") {
-			originalTags.forEach((tag) => {
+			imageItems[i].tags.forEach((tag) => {
 				if (!tagListFiltered.includes(tag)) tagListFiltered.push(tag);
 			});
 		}
