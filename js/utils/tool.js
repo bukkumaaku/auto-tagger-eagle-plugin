@@ -36,7 +36,7 @@ async function setTag(imageItems, tagListBatch) {
 				if (tagger[tag] !== undefined) return `${tagger[tag]}${window.formData.value.splitter}${tag}`;
 			return tag;
 		});
-		const tagListFiltered = tagList.filter(tag != "" && tag != null && tag != undefined);
+		const tagListFiltered = tagList.filter((tag) => tag != "" && tag != null && tag != undefined);
 		if (window.formData.value.overwrite === "merge") {
 			imageItems[i].tags.forEach((tag) => {
 				if (!tagListFiltered.includes(tag)) tagListFiltered.push(tag);
