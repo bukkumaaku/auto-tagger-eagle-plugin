@@ -25,8 +25,9 @@ async function setTag(imageItems, tagListBatch) {
 		window.completeItem.value++;
 		const originalTags = imageItems[i].tags;
 		const tagList = tagListBatch[i].map((tag) => {
-			if (window.formData.value.language === "zh") if (tagger[tag] !== undefined) return tagger[tag];
-			if (window.formData.value.language === "mix")
+			if (window.formData.value.language === "zh") {
+				if (tagger[tag] !== undefined) return tagger[tag];
+			} else if (window.formData.value.language === "mix" && !window.formData.value.filterTags.includes(tag))
 				if (tagger[tag] !== undefined) return `${tagger[tag]}${window.formData.value.splitter}${tag}`;
 			return tag;
 		});

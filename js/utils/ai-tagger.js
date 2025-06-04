@@ -28,10 +28,6 @@ async function createSession(modelPath) {
 			name: "dml",
 		});
 	} else {
-		/* executionProviders.push({
-			name: "coreml",
-			coreMlFlags: 0x004 | 0x002 | 0x010 | 0x020,
-		}); */
 		executionProviders.push({
 			name: "webgpu",
 		});
