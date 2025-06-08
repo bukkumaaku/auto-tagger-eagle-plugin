@@ -65,10 +65,10 @@ async function startGetTag(config) {
 	is_processing = false;
 }
 
-async function initialize() {
+async function initialize(isAll) {
 	// 初始化
 	let items = await eagle.item.getSelected();
-	if (items.length === 0) {
+	if (items.length === 0 || isAll) {
 		items = await eagle.item.getAll();
 	}
 	window.items = items;
@@ -92,4 +92,15 @@ async function getConfig() {
 async function setConfig(config) {
 	// 设置配置
 	fs.writeFileSync(await checkConfigPath(), JSON.stringify(config, null, 2));
+}
+
+async function autotaggerFun(config) {
+	if (config.autotagger === true) {
+		let tmpData = JSON.parse(JSON.stringify(config));
+		config.overwrite = "nocover";
+		window.formData.value = config;
+		await window.handleSubmit(true);
+		config = tmpData;
+		window.formData.value = tmpData;
+	}
 }

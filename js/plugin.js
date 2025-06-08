@@ -1,4 +1,4 @@
-eagle.onPluginCreate(() => {
+eagle.onPluginCreate(async () => {
 	console.log("eagle.onPluginCreate");
 });
 

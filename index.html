@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html>
 	<head>
 		<meta charset="UTF-8" />
@@ -150,6 +150,15 @@
 							:disabled="formData.language !== 'mix'"
 						/>
 					</n-form-item>
+					<!-- 启动自动打标 -->
+					<n-form-item label="启动后打标" path="autotagger">
+						<n-tooltip trigger="hover">
+							<template #trigger> <div v-html="questionMark" class="questionMark"></div> </template>
+							打开软件后自动对未打标图片打标，打标参数套用上一次打标参数<br />
+							标签覆写使用不覆写
+						</n-tooltip>
+						<n-switch v-model:value="formData.autotagger" />
+					</n-form-item>
 					<!-- 操作按钮 -->
 					<div style="display: flex; gap: 10px; justify-content: flex-end">
 						<n-button type="primary" @click="handleSubmit">确定</n-button>
@@ -173,7 +182,7 @@
 						const theme = naive.darkTheme;
 						const formData = ref(config);
 						// 提交处理
-						const handleSubmit = async () => {
+						const handleSubmit = async (isAll = false) => {
 							if (formData.value.modelPath === "") {
 								notification("请选择模型路径");
 								return;
@@ -183,7 +192,7 @@
 								return;
 							}
 							is_processing = true;
-							await initialize();
+							await initialize(isAll);
 							await wait(500);
 							config = formData.value;
 							await setConfig(config);
@@ -207,6 +216,7 @@
 						window.formData = formData;
 						window.allItem = allItem;
 						window.completeItem = completeItem;
+						window.handleSubmit = handleSubmit;
 						return {
 							formData,
 							handleSubmit,
@@ -223,6 +233,8 @@
 				})
 					.use(naive)
 					.mount("#app");
+				await wait(1000);
+				await autotaggerFun(config);
 			}
 			main();
 		</script>
