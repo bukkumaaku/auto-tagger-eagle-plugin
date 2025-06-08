@@ -78,7 +78,7 @@ async function initialize() {
 
 async function checkConfigPath() {
 	// 检查config.private.json是否存在
-	if (!fs.existsSync(__dirname + "/config.private.json")) {
+	if (fs.existsSync(__dirname + "/config.private.json")) {
 		return __dirname + "/config.private.json";
 	}
 	return __dirname + "/config.json";
