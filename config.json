@@ -1,20 +1,9 @@
 {
-  "modelPath": "wd-eva02-large-tagger-v3",
-  "threshold": 0.25,
-  "steps": 5,
-  "filterTags": [
-    "1boy",
-    "1个男孩",
-    "1girl",
-    "1个女孩",
-    "solo",
-    "单人",
-    "多人",
-    "duo",
-    "聚焦男性",
-    "全年龄向"
-  ],
-  "overwrite": "cover",
-  "language": "zh",
-  "splitter": "|"
+	"modelPath": "",
+	"threshold": 0.25,
+	"steps": 1,
+	"filterTags": ["1个男孩", "1个女孩"],
+	"overwrite": "nocover",
+	"language": "zh",
+	"splitter": ""
 }

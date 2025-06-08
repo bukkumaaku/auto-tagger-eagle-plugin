@@ -76,12 +76,20 @@ async function initialize() {
 	window.completeItem.value = 0;
 }
 
+async function checkConfigPath() {
+	// 检查config.private.json是否存在
+	if (!fs.existsSync(__dirname + "/config.private.json")) {
+		return __dirname + "/config.private.json";
+	}
+	return __dirname + "/config.json";
+}
+
 async function getConfig() {
 	// 获取配置
-	return JSON.parse(fs.readFileSync(__dirname + "/config.json", "utf-8"));
+	return JSON.parse(fs.readFileSync(await checkConfigPath(), "utf-8"));
 }
 
 async function setConfig(config) {
 	// 设置配置
-	fs.writeFileSync(__dirname + "/config.json", JSON.stringify(config, null, 2));
+	fs.writeFileSync(await checkConfigPath(), JSON.stringify(config, null, 2));
 }
