@@ -1,6 +1,7 @@
 const fs = require("fs");
 
 let is_processing = false;
+let count_taggger = 0;
 
 async function wait(ms) {
 	return new Promise((resolve) => {
@@ -44,30 +45,33 @@ async function setTag(imageItems, tagListBatch) {
 		}
 		imageItems[i].tags = tagListFiltered;
 		await imageItems[i].save();
+		count_taggger++;
 	}
 }
 
 async function startGetTag(config) {
 	// 开始打标签
 	const imagePath = [];
+	count_taggger = 0;
 	window.items.forEach((item) => {
 		imagePath.push(item.thumbnailPath);
 	});
 	try {
 		const aiTagger = require(__dirname + "/js/utils/ai-tagger.js");
-		await notification("正在加载模型，请稍候...");
+		await notification(`正在开始打标，有${imagePath.length}个文件待处理`);
 		await aiTagger(imagePath, window.items, setTag, config);
 	} catch (e) {
 		alert("有部分文件处理失败，请关闭窗口或者调低批次大小后重试");
 		console.error(e);
 	}
-	await notification("所有文件已打标完成");
+	await notification(`所有文件已打标完成,共${count_taggger}个文件`);
 	is_processing = false;
 }
 
 async function initialize(isAll) {
 	// 初始化
 	let items = await eagle.item.getSelected();
+	console.log(isAll, items.length);
 	if (items.length === 0 || isAll) {
 		items = await eagle.item.getAll();
 	}
