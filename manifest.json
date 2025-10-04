@@ -7,11 +7,12 @@
 	"logo": "/logo.png",
 	"keywords": [],
 	"devTools": false,
+	"dependencies": ["ffmpeg"],
 	"main": {
 		"serviceMode": true,
 		"url": "index.html",
-		"width": 640,
-		"height": 650,
+		"width": 750,
+		"height": 750,
 		"frame": false
 	}
 }

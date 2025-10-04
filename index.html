@@ -128,6 +128,21 @@
 							</n-space>
 						</n-radio-group>
 					</n-form-item>
+					<!-- 是否识别视频 -->
+					<n-form-item label="视频标签" path="readVideo">
+						<n-tooltip trigger="hover">
+							<template #trigger> <div v-html="questionMark" class="questionMark"></div> </template>
+							将读取视频内容，并对1%、20%、40%、60%、80%、99%位置的图像进行标签识别<br />
+							对视频文件进行标签速度将大幅度降低<br />
+							需要提前安装插件中心的ffmpeg
+						</n-tooltip>
+						<n-radio-group v-model:value="formData.readVideo" name="readVideo">
+							<n-space>
+								<n-radio value="noread">不读取视频内容</n-radio>
+								<n-radio value="read">读取并标签</n-radio>
+							</n-space>
+						</n-radio-group>
+					</n-form-item>
 					<!-- 标签语言选择 -->
 					<n-form-item label="标签语言" path="language">
 						<n-radio-group v-model:value="formData.language" name="language">

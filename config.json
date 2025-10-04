@@ -6,5 +6,6 @@
 	"overwrite": "nocover",
 	"language": "zh",
 	"splitter": "",
-	"autotagger": false
+	"autotagger": false,
+	"readVideo": "noread"
 }
