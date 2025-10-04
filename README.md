@@ -7,7 +7,7 @@
 -   自动为图片/视频文件生成描述性标签
 -   优先使用 GPU 加速（支持 DirectML/WebGPU 等非 CUDA 加速）
 -   无 GPU 时自动切换至 CPU 模式
--   支持 WDv2 和 Vitv3 系列模型
+-   支持 WDv2 、Vitv3、cl-tagger 系列模型
 
 ## 安装指南
 
@@ -81,13 +81,16 @@ auto-tagger-eagle-plugin/
     │   ├── model.onnx
     │   └── selected_tags.csv
     └── wd-vit-tagger-v3/
+    │   ├── model.onnx
+    │   └── selected_tags.csv
+    └── cl-tagger/
         ├── model.onnx
-        └── selected_tags.csv
+        └── tag_mapping.json
 ```
 
 ## 使用说明
 
-1. eagle中加载本地插件
+1. eagle 中加载本地插件
 2. 选择多个文件
 3. 按照需求自己填写配置
 4. 在文件信息面板查看生成标签
@@ -96,8 +99,9 @@ auto-tagger-eagle-plugin/
 
 ⚠️ 当前已验证模型：
 
--   `wd-v1-4-moat-tagger-v2`
+-   `wd-v1-4-moat-tagger-v2` //注：此模型的批次只能设置为 1
 -   `wd-vit-tagger-v3`
+-   `cl-tagger` //注：此模型阈值请大于 0.55，否则可能会有非常多标签
 
 ## 常见问题
 
