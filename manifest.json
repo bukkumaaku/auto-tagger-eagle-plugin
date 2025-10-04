@@ -11,7 +11,7 @@
 	"main": {
 		"serviceMode": true,
 		"url": "index.html",
-		"width": 750,
+		"width": 850,
 		"height": 750,
 		"frame": false
 	}
