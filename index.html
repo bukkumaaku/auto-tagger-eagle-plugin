@@ -183,9 +183,9 @@
 			</n-config-provider>
 		</div>
 		<script>
-			const { createApp, ref } = Vue;
+			const { createApp, ref,h } = Vue;
 			// 引用通知组件
-			const sendNotification = naive.createDiscreteApi(["notification"]);
+			const sendNotification = naive.createDiscreteApi(["notification","dialog"]);
 
 			let config = {};
 			async function main() {
