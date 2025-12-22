@@ -1,257 +1,554 @@
 <!DOCTYPE html>
 <html>
-	<head>
-		<meta charset="UTF-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-		<script src="js/lib/vue.global.js"></script>
-		<script src="js/lib/naiveui.js"></script>
-		<script src="js/utils/tagset.js"></script>
-		<script src="js/utils/tool.js"></script>
-		<script src="js/plugin.js"></script>
-		<style>
-			.questionMark {
-				width: 19px;
-				height: 19px;
-				margin-right: 5px;
-			}
-			body {
-				display: flex;
-				justify-content: center;
-				align-items: center;
-				min-height: 100vh;
-				margin: 0;
-			}
-			#app {
-				width: 90%;
-				height: fit-content;
-			}
-			@media (max-width: 800px) {
-				#app {
-					max-width: 600px;
-				}
-			}
-		</style>
-	</head>
+    <head>
+        <meta charset="UTF-8" />
+        <meta
+            name="viewport"
+            content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
+        />
+        <script src="js/lib/vue.global.js"></script>
+        <script src="js/lib/naiveui.js"></script>
+        <script src="js/utils/tagset.js"></script>
+        <script src="js/utils/tool.js"></script>
+        <script src="js/utils/download-models.js"></script>
+        <script src="js/plugin.js"></script>
+        <style>
+            .questionMark {
+                width: 19px;
+                height: 19px;
+                margin-right: 5px;
+            }
+            body {
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 100vh;
+                margin: 0;
+            }
+            #app {
+                width: 90%;
+                height: fit-content;
+            }
+            @media (max-width: 800px) {
+                #app {
+                    max-width: 600px;
+                }
+            }
+        </style>
+    </head>
 
-	<body>
-		<div id="app">
-			<n-config-provider :theme="theme">
-				<n-space
-					justify="space-between"
-					style="
-						width: 100%;
-						height: 30px;
-						position: fixed;
-						top: 0px;
-						left: 0px;
-						-webkit-app-region: drag;
-						z-index: 10000;
-					"
-				>
-					<n-thing style="height: 30px; line-height: 30px; margin-left: 10px">自动标签</n-thing>
-					<!-- 最小化和关闭按钮 -->
-					<n-thing>
-						<n-button @click="handleMinimize" size="small" type="text" style="-webkit-app-region: no-drag">
-							<img src="./images/min.png" style="width: 18px; height: 18px" />
-						</n-button>
-						<n-button @click="handleClose" size="small" type="text" style="-webkit-app-region: no-drag">
-							<img src="./images/close.png" style="width: 18px; height: 18px" />
-						</n-button>
-					</n-thing>
-				</n-space>
-				<n-divider style="position: fixed; top: 5px; left: 0px; width: 100%"></n-divider>
-				<n-form
-					:model="formData"
-					label-placement="left"
-					label-width="auto"
-					style="width: fit-content; margin: auto auto; position: relative; margin-top: 30px"
-				>
-					<n-form-item label="进度" path="modelName">
-						<n-thing>{{ allItem }}/{{ completeItem }}</n-thing> &nbsp;&nbsp;
-						<n-progress
-							type="line"
-							:percentage="Number((completeItem / allItem * 100).toFixed(2))"
-							indicator-placement="inside"
-						/>
-					</n-form-item>
-					<!-- 模型位置 -->
-					<n-form-item label="模型位置" path="modelPath">
-						<n-select v-model:value="formData.modelPath" :options="options" />
-					</n-form-item>
-					<!-- 阈值 -->
-					<n-form-item label="阈值" path="threshold"
-						><n-tooltip trigger="hover">
-							<template #trigger> <div v-html="questionMark" class="questionMark"></div> </template>
-							阈值越高，标签越少，但是标签准确率高
-							<br />
-							阈值越低，标签越多，但是标签准确率低
-						</n-tooltip>
-						<n-input-number v-model:value="formData.threshold" :min="0" :max="1" :step="0.01" />
-					</n-form-item>
-					<!-- 步数 -->
-					<n-form-item label="批次大小" path="steps">
-						<n-tooltip trigger="hover">
-							<template #trigger> <div v-html="questionMark" class="questionMark"></div> </template>
-							每批次处理图片的数量，建议不要太大
-						</n-tooltip>
-						<n-input-number v-model:value="formData.steps" :min="1" :max="40" />
-					</n-form-item>
-					<!-- 过滤标签 -->
-					<n-form-item label="过滤标签" path="filterTags">
-						<n-tooltip trigger="hover">
-							<template #trigger> <div v-html="questionMark" class="questionMark"></div> </template>
-							被过滤的标签将不会写入文件的标签组中
-						</n-tooltip>
-						<n-select
-							filterable
-							multiple
-							tag
-							:show="false"
-							:show-arrow="false"
-							v-model:value="formData.filterTags"
-							placeholder="输入过滤的标签（英语），回车确认"
-						/>
-					</n-form-item>
-					<!-- 是否覆写 -->
-					<n-form-item label="是否覆写" path="overwrite">
-						<n-tooltip trigger="hover">
-							<template #trigger> <div v-html="questionMark" class="questionMark"></div> </template>
-							不覆写：直接跳过有标签文件（若大量文件已有标签，速度最快）<br />
-							覆写：若是有标签则进行覆写（时间消耗较高）<br />
-							合并：若是有标签则进行合并（时间消耗最高）
-						</n-tooltip>
-						<n-radio-group v-model:value="formData.overwrite" name="overwrite">
-							<n-space>
-								<n-radio value="nocover">不覆写</n-radio>
-								<n-radio value="cover">覆写</n-radio>
-								<n-radio value="merge">合并</n-radio>
-							</n-space>
-						</n-radio-group>
-					</n-form-item>
-					<!-- 是否识别视频 -->
-					<n-form-item label="视频标签" path="readVideo">
-						<n-tooltip trigger="hover">
-							<template #trigger> <div v-html="questionMark" class="questionMark"></div> </template>
-							将读取视频内容，并对1%、20%、40%、60%、80%、99%位置的图像进行标签识别<br />
-							对视频文件进行标签速度将大幅度降低<br />
-							需要提前安装插件中心的ffmpeg
-						</n-tooltip>
-						<n-radio-group v-model:value="formData.readVideo" name="readVideo">
-							<n-space>
-								<n-radio value="noread">不读取视频内容</n-radio>
-								<n-radio value="read">读取并标签</n-radio>
-							</n-space>
-						</n-radio-group>
-					</n-form-item>
-					<!-- 标签语言选择 -->
-					<n-form-item label="标签语言" path="language">
-						<n-radio-group v-model:value="formData.language" name="language">
-							<n-space>
-								<n-radio value="zh">中文</n-radio>
-								<n-radio value="en">英文</n-radio>
-								<n-radio value="mix">中文+英文</n-radio>
-							</n-space>
-						</n-radio-group>
-					</n-form-item>
-					<!-- 分隔符 -->
-					<n-form-item label="分隔符" path="splitter">
-						<n-tooltip trigger="hover">
-							<template #trigger> <div v-html="questionMark" class="questionMark"></div> </template>
-							中文和英文标签共存才需要开启分隔符
-						</n-tooltip>
-						<n-input
-							v-model:value="formData.splitter"
-							:placeholder="formData.language === 'mix' ? '请输入分隔符' : '中文和英文标签共存才需要开启分隔符'"
-							:disabled="formData.language !== 'mix'"
-						/>
-					</n-form-item>
-					<!-- 启动自动打标 -->
-					<n-form-item label="启动后打标" path="autotagger">
-						<n-tooltip trigger="hover">
-							<template #trigger> <div v-html="questionMark" class="questionMark"></div> </template>
-							打开软件后自动对未打标图片打标，打标参数套用上一次打标参数<br />
-							标签覆写使用不覆写
-						</n-tooltip>
-						<n-switch v-model:value="formData.autotagger" />
-					</n-form-item>
-					<!-- 操作按钮 -->
-					<div style="display: flex; gap: 10px; justify-content: flex-end">
-						<n-button type="primary" @click="handleSubmit(false)">确定</n-button>
-						<n-button @click="handleReset">恢复默认</n-button>
-					</div>
-				</n-form>
-			</n-config-provider>
-		</div>
-		<script>
-			const { createApp, ref,h } = Vue;
-			// 引用通知组件
-			const sendNotification = naive.createDiscreteApi(["notification","dialog"]);
+    <body>
+        <div id="app">
+            <n-config-provider :theme="theme">
+                <n-space
+                    justify="space-between"
+                    style="
+                        width: 100%;
+                        height: 30px;
+                        position: fixed;
+                        top: 0px;
+                        left: 0px;
+                        -webkit-app-region: drag;
+                        z-index: 10000;
+                    "
+                >
+                    <n-thing
+                        style="
+                            height: 30px;
+                            line-height: 30px;
+                            margin-left: 10px;
+                        "
+                        >自动标签</n-thing
+                    >
+                    <!-- 最小化和关闭按钮 -->
+                    <n-thing>
+                        <n-button
+                            @click="handleMinimize"
+                            size="small"
+                            type="text"
+                            style="-webkit-app-region: no-drag"
+                        >
+                            <img
+                                src="./images/min.png"
+                                style="width: 18px; height: 18px"
+                            />
+                        </n-button>
+                        <n-button
+                            @click="handleClose"
+                            size="small"
+                            type="text"
+                            style="-webkit-app-region: no-drag"
+                        >
+                            <img
+                                src="./images/close.png"
+                                style="width: 18px; height: 18px"
+                            />
+                        </n-button>
+                    </n-thing>
+                </n-space>
+                <n-divider
+                    style="position: fixed; top: 5px; left: 0px; width: 100%"
+                ></n-divider>
+                <n-form
+                    :model="formData"
+                    label-placement="left"
+                    label-width="auto"
+                    style="
+                        width: fit-content;
+                        margin: auto auto;
+                        position: relative;
+                        margin-top: 30px;
+                    "
+                >
+                    <n-form-item label="进度" path="modelName">
+                        <n-thing>{{ allItem }}/{{ completeItem }}</n-thing>
+                        &nbsp;&nbsp;
+                        <n-progress
+                            type="line"
+                            :percentage="Number((completeItem / allItem * 100).toFixed(2))"
+                            indicator-placement="inside"
+                        />
+                    </n-form-item>
+                    <!-- 模型位置 -->
+                    <n-form-item label="模型位置" path="modelPath">
+                        <n-select
+                            v-model:value="formData.modelPath"
+                            :options="options"
+                        />
+                        <n-button @click="downloadModel">下载模型</n-button>
+                    </n-form-item>
+                    <!-- 阈值 -->
+                    <n-form-item label="阈值" path="threshold"
+                        ><n-tooltip trigger="hover">
+                            <template #trigger>
+                                <div
+                                    v-html="questionMark"
+                                    class="questionMark"
+                                ></div>
+                            </template>
+                            阈值越高，标签越少，但是标签准确率高
+                            <br />
+                            阈值越低，标签越多，但是标签准确率低
+                        </n-tooltip>
+                        <n-input-number
+                            v-model:value="formData.threshold"
+                            :min="0"
+                            :max="1"
+                            :step="0.01"
+                        />
+                    </n-form-item>
+                    <!-- 步数 -->
+                    <n-form-item label="批次大小" path="steps">
+                        <n-tooltip trigger="hover">
+                            <template #trigger>
+                                <div
+                                    v-html="questionMark"
+                                    class="questionMark"
+                                ></div>
+                            </template>
+                            每批次处理图片的数量，建议不要太大
+                        </n-tooltip>
+                        <n-input-number
+                            v-model:value="formData.steps"
+                            :min="1"
+                            :max="40"
+                        />
+                    </n-form-item>
+                    <!-- 过滤标签 -->
+                    <n-form-item label="过滤标签" path="filterTags">
+                        <n-tooltip trigger="hover">
+                            <template #trigger>
+                                <div
+                                    v-html="questionMark"
+                                    class="questionMark"
+                                ></div>
+                            </template>
+                            被过滤的标签将不会写入文件的标签组中
+                        </n-tooltip>
+                        <n-select
+                            filterable
+                            multiple
+                            tag
+                            :show="false"
+                            :show-arrow="false"
+                            v-model:value="formData.filterTags"
+                            placeholder="输入过滤的标签（英语），回车确认"
+                        />
+                    </n-form-item>
+                    <!-- 是否覆写 -->
+                    <n-form-item label="是否覆写" path="overwrite">
+                        <n-tooltip trigger="hover">
+                            <template #trigger>
+                                <div
+                                    v-html="questionMark"
+                                    class="questionMark"
+                                ></div>
+                            </template>
+                            不覆写：直接跳过有标签文件（若大量文件已有标签，速度最快）<br />
+                            覆写：若是有标签则进行覆写（时间消耗较高）<br />
+                            合并：若是有标签则进行合并（时间消耗最高）
+                        </n-tooltip>
+                        <n-radio-group
+                            v-model:value="formData.overwrite"
+                            name="overwrite"
+                        >
+                            <n-space>
+                                <n-radio value="nocover">不覆写</n-radio>
+                                <n-radio value="cover">覆写</n-radio>
+                                <n-radio value="merge">合并</n-radio>
+                            </n-space>
+                        </n-radio-group>
+                    </n-form-item>
+                    <!-- 是否识别视频 -->
+                    <n-form-item label="视频标签" path="readVideo">
+                        <n-tooltip trigger="hover">
+                            <template #trigger>
+                                <div
+                                    v-html="questionMark"
+                                    class="questionMark"
+                                ></div>
+                            </template>
+                            将读取视频内容，并对1%、20%、40%、60%、80%、99%位置的图像进行标签识别<br />
+                            对视频文件进行标签速度将大幅度降低<br />
+                            需要提前安装插件中心的ffmpeg
+                        </n-tooltip>
+                        <n-radio-group
+                            v-model:value="formData.readVideo"
+                            name="readVideo"
+                        >
+                            <n-space>
+                                <n-radio value="noread">不读取视频内容</n-radio>
+                                <n-radio value="read">读取并标签</n-radio>
+                            </n-space>
+                        </n-radio-group>
+                    </n-form-item>
+                    <!-- 标签语言选择 -->
+                    <n-form-item label="标签语言" path="language">
+                        <n-radio-group
+                            v-model:value="formData.language"
+                            name="language"
+                        >
+                            <n-space>
+                                <n-radio value="zh">中文</n-radio>
+                                <n-radio value="en">英文</n-radio>
+                                <n-radio value="mix">中文+英文</n-radio>
+                            </n-space>
+                        </n-radio-group>
+                    </n-form-item>
+                    <!-- 分隔符 -->
+                    <n-form-item label="分隔符" path="splitter">
+                        <n-tooltip trigger="hover">
+                            <template #trigger>
+                                <div
+                                    v-html="questionMark"
+                                    class="questionMark"
+                                ></div>
+                            </template>
+                            中文和英文标签共存才需要开启分隔符
+                        </n-tooltip>
+                        <n-input
+                            v-model:value="formData.splitter"
+                            :placeholder="formData.language === 'mix' ? '请输入分隔符' : '中文和英文标签共存才需要开启分隔符'"
+                            :disabled="formData.language !== 'mix'"
+                        />
+                    </n-form-item>
+                    <!-- 启动自动打标 -->
+                    <n-form-item label="启动后打标" path="autotagger">
+                        <n-tooltip trigger="hover">
+                            <template #trigger>
+                                <div
+                                    v-html="questionMark"
+                                    class="questionMark"
+                                ></div>
+                            </template>
+                            打开软件后自动对未打标图片打标，打标参数套用上一次打标参数<br />
+                            标签覆写使用不覆写
+                        </n-tooltip>
+                        <n-switch v-model:value="formData.autotagger" />
+                    </n-form-item>
+                    <!-- 操作按钮 -->
+                    <div
+                        style="
+                            display: flex;
+                            gap: 10px;
+                            justify-content: flex-end;
+                        "
+                    >
+                        <n-button type="primary" @click="handleSubmit(false)"
+                            >确定</n-button
+                        >
+                        <n-button @click="handleReset">恢复默认</n-button>
+                    </div>
+                </n-form>
+                <n-modal
+                    v-model:show="showModal"
+                    preset="card"
+                    title="下载模型资源"
+                    :mask-closable="!isDownloading"
+                    :close-on-esc="!isDownloading"
+                    :closable="!isDownloading"
+                    :on-close="handleCloseModal"
+                >
+                    <n-space vertical size="large">
+                        <n-card embedded :bordered="false" size="small">
+                            <n-space vertical>
+                                <div class="setting-row">
+                                    <span class="label">选择模型：</span>
+                                    <n-select
+                                        v-model:value="selectedModel"
+                                        :options="modelOptions"
+                                        :disabled="isDownloading"
+                                        placeholder="请选择要使用的模型"
+                                        style="width: 300px"
+                                    />
+                                </div>
 
-			let config = {};
-			async function main() {
-				// 获取配置
-				config = await getConfig();
-				const originalConfig = JSON.parse(JSON.stringify(config));
-				createApp({
-					setup() {
-						const theme = naive.darkTheme;
-						const formData = ref(config);
-						// 提交处理
-						const handleSubmit = async (isAll = false) => {
-							if (formData.value.modelPath === "") {
-								notification("请选择模型路径");
-								return;
-							}
-							if (is_processing) {
-								notification("仍有任务正在进行中，请等待");
-								return;
-							}
-							is_processing = true;
-							await initialize(isAll);
-							await wait(500);
-							config = formData.value;
-							await setConfig(config);
-							await startGetTag(config);
-						};
-						// 重置表单
-						const handleReset = () => {
-							formData.value = originalConfig;
-						};
-						const handleMinimize = async () => {
-							await eagle.window.minimize();
-						};
-						const handleClose = async () => {
-							await eagle.window.hide();
-						};
-						const options = ref([]);
-						const allItem = ref(0);
-						const completeItem = ref(0);
-						const questionMark = ref(`<img src="./images/img.icons8.png" class="questionMark">`);
-						window.options = options;
-						window.formData = formData;
-						window.allItem = allItem;
-						window.completeItem = completeItem;
-						window.handleSubmit = handleSubmit;
-						return {
-							formData,
-							handleSubmit,
-							handleReset,
-							options,
-							allItem,
-							completeItem,
-							questionMark,
-							theme,
-							handleClose,
-							handleMinimize,
-						};
-					},
-				})
-					.use(naive)
-					.mount("#app");
-				await wait(1000);
-				await autotaggerFun(config);
-			}
-			main();
-		</script>
-	</body>
+                                <div class="setting-row">
+                                    <span class="label">下载源：</span>
+                                    <n-radio-group
+                                        v-model:value="downloadSource"
+                                        :disabled="isDownloading"
+                                    >
+                                        <n-radio-button value="direct">
+                                            HuggingFace 直连
+                                        </n-radio-button>
+                                        <n-radio-button value="mirror">
+                                            国内镜像 (HF-Mirror)
+                                        </n-radio-button>
+                                    </n-radio-group>
+                                </div>
+                            </n-space>
+                        </n-card>
+
+                        <div
+                            v-if="!isDownloading"
+                            style="display: flex; justify-content: flex-end"
+                        >
+                            <n-button
+                                type="primary"
+                                size="large"
+                                @click="startDownload"
+                                :disabled="!selectedModel"
+                            >
+                                <template #icon>
+                                    <n-icon
+                                        ><div class="i-download-icon">
+                                            ⬇
+                                        </div></n-icon
+                                    >
+                                </template>
+                                开始下载
+                            </n-button>
+                        </div>
+
+                        <n-collapse-transition :show="isDownloading">
+                            <n-card
+                                title="下载进度"
+                                embedded
+                                :bordered="false"
+                                size="small"
+                            >
+                                <template #header-extra>
+                                    <n-tag type="info" size="small" round>
+                                        速度: {{ currentSpeed }}
+                                    </n-tag>
+                                </template>
+
+                                <n-space vertical size="medium">
+                                    <div class="progress-item">
+                                        <div class="progress-label">
+                                            <span>📦 selected_tags.csv</span>
+                                            <span class="percentage"
+                                                >{{ progressTags }}%</span
+                                            >
+                                        </div>
+                                        <n-progress
+                                            type="line"
+                                            :percentage="progressTags"
+                                            :indicator-placement="'inside'"
+                                            processing
+                                            status="success"
+                                        />
+                                    </div>
+
+                                    <div class="progress-item">
+                                        <div class="progress-label">
+                                            <span>🧠 model.onnx</span>
+                                            <span class="percentage"
+                                                >{{ progressModel }}%</span
+                                            >
+                                        </div>
+                                        <n-progress
+                                            type="line"
+                                            :percentage="progressModel"
+                                            :indicator-placement="'inside'"
+                                            processing
+                                            :status="progressModel === 100 ? 'success' : 'info'"
+                                        />
+                                    </div>
+                                </n-space>
+
+                                <div class="download-footer">
+                                    <n-spin
+                                        size="small"
+                                        v-if="progressModel < 100"
+                                    />
+                                    <span style="margin-left: 8px">
+                                        {{ progressModel < 100 ?
+                                        '正在下载资源，请勿关闭窗口...' :
+                                        '下载完成！正在校验文件...' }}
+                                    </span>
+                                </div>
+                            </n-card>
+                        </n-collapse-transition>
+                    </n-space>
+                </n-modal>
+            </n-config-provider>
+        </div>
+        <script>
+            const { createApp, ref, h } = Vue;
+            // 引用通知组件
+            const sendNotification = naive.createDiscreteApi([
+                "notification",
+                "dialog",
+                "modal",
+            ]);
+
+            let config = {};
+            async function main() {
+                // 获取配置
+                config = await getConfig();
+                const originalConfig = JSON.parse(JSON.stringify(config));
+                createApp({
+                    setup() {
+                        const theme = naive.darkTheme;
+                        const formData = ref(config);
+                        // 提交处理
+                        const handleSubmit = async (isAll = false) => {
+                            if (formData.value.modelPath === "") {
+                                notification("请选择模型路径");
+                                return;
+                            }
+                            if (is_processing) {
+                                notification("仍有任务正在进行中，请等待");
+                                return;
+                            }
+                            is_processing = true;
+                            await initialize(isAll);
+                            await wait(500);
+                            config = formData.value;
+                            await setConfig(config);
+                            await startGetTag(config);
+                        };
+                        // 重置表单
+                        const handleReset = () => {
+                            formData.value = originalConfig;
+                        };
+                        const handleMinimize = async () => {
+                            await eagle.window.minimize();
+                        };
+                        const handleClose = async () => {
+                            await eagle.window.hide();
+                        };
+                        const downloadModel = async () => {};
+                        const options = ref([]);
+                        const allItem = ref(0);
+                        const completeItem = ref(0);
+                        const questionMark = ref(
+                            `<img src="./images/img.icons8.png" class="questionMark">`
+                        );
+                        const showModal = ref(false);
+                        const isDownloading = ref(false);
+                        const downloadSource = ref("mirror");
+                        const currentSpeed = ref("0 B/s");
+                        const progressTags = ref(0);
+                        const progressModel = ref(0);
+                        const selectedModel = ref({
+                            label: "wd-eva02-large-tagger-v3",
+                            value: "wd-eva02-large-tagger-v3",
+                            type: "wd",
+                        });
+                        const modelOptions = [
+                            {
+                                label: "wd-eva02-large-tagger-v3",
+                                value: "wd-eva02-large-tagger-v3",
+                                type: "wd",
+                            },
+                            {
+                                label: "wd-vit-tagger-v3",
+                                value: "wd-vit-tagger-v3",
+                                type: "wd",
+                            },
+                            {
+                                label: "wd-v1-4-moat-tagger-v2",
+                                value: "wd-v1-4-moat-tagger-v2",
+                                type: "wd",
+                            },
+                            {
+                                label: "cl-tagger",
+                                value: "cl-tagger",
+                                type: "cl",
+                            },
+                        ];
+                        const handleCloseModal = () => {
+                            showModal.value = false;
+                        };
+                        const onProgress = (percentage, speed, type) => {
+                            if (type === "model")
+                                progressModel.value = percentage;
+                            else progressTags.value = percentage;
+                            currentSpeed.value = speed;
+                        };
+                        const startDownload = async () => {
+                            isDownloading.value = true;
+                            progressTags.value = 0;
+                            progressModel.value = 0;
+                            currentSpeed.value = "Connecting...";
+                            await downloadFile(
+                                selectedModel.value.value,
+                                selectedModel.value.type,
+                                onProgress
+                            );
+                        };
+                        const finishDownload = async () => {
+                            isDownloading.value = false;
+                        };
+                        window.options = options;
+                        window.formData = formData;
+                        window.allItem = allItem;
+                        window.completeItem = completeItem;
+                        window.handleSubmit = handleSubmit;
+                        return {
+                            formData,
+                            handleSubmit,
+                            handleReset,
+                            options,
+                            allItem,
+                            completeItem,
+                            questionMark,
+                            theme,
+                            handleClose,
+                            handleMinimize,
+                            downloadModel,
+                            showModal,
+                            isDownloading,
+                            downloadSource,
+                            currentSpeed,
+                            progressTags,
+                            progressModel,
+                            modelOptions,
+                            handleCloseModal,
+                            startDownload,
+                            selectedModel,
+                        };
+                    },
+                })
+                    .use(naive)
+                    .mount("#app");
+                await wait(1000);
+                await autotaggerFun(config);
+            }
+            main();
+        </script>
+    </body>
 </html>

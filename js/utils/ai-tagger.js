@@ -59,6 +59,9 @@ async function createSession(modelPath) {
         executionProviders.push({
             name: "webgpu",
         });
+        executionProviders.push({
+            name: "coreml",
+        });
     }
     executionProviders.push({
         name: "cpu",
@@ -261,10 +264,10 @@ async function getTag(
     const result = await session.run(feeds);
     if (result === undefined) return [[]];
     let cpuData =
-        result.output?.data ||
-        result.output?.cpuData ||
-        result.predictions_sigmoid?.cpuData ||
-        result.output0.cpuData;
+        result?.output?.data ||
+        result?.output?.cpuData ||
+        result?.predictions_sigmoid?.cpuData ||
+        result?.output0?.cpuData;
     if (wd_or_cl === "cl") {
         for (let i = 0; i < cpuData.length; i++) {
             let value = cpuData[i];
