@@ -1,4 +1,4 @@
-const tagger = {
+ const tagger = {
 	zucchini: "夏南瓜",
 	zooanime: "动物园",
 	zoo_min: "放大",

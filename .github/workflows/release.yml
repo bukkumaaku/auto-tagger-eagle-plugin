@@ -1,0 +1,98 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          # Windows x64 环境配置
+          - os: windows-latest
+            platform_name: win32
+            keep_arch: x64
+            zip_name: auto-tagger-eagle-plugin-win-x64.zip
+          
+          # macOS ARM64 (Apple Silicon) 环境配置
+          - os: macos-14
+            platform_name: darwin
+            keep_arch: arm64
+            zip_name: auto-tagger-eagle-plugin-mac-arm64.zip
+
+    steps:
+      # 1. 下载代码
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. 配置 Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # 3. 安装依赖 (仅生产环境，不含 devDependencies)
+      - name: Install dependencies
+        run: npm install --omit=dev
+
+      # 4. Windows 专属清理步骤 (PowerShell)
+      - name: Cleanup for Windows
+        if: runner.os == 'Windows'
+        run: |
+          # 1. 删除 fluent-ffmpeg 的 coverage
+          if (Test-Path "node_modules/fluent-ffmpeg/coverage") { Remove-Item "node_modules/fluent-ffmpeg/coverage" -Recurse -Force }
+          
+          # 2. onnxruntime 清理逻辑
+          $BasePath = "node_modules/onnxruntime-node/bin/napi-v6"
+          
+          # 删除不需要的平台文件夹 (删掉 darwin 和 linux)
+          Remove-Item "$BasePath/darwin" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item "$BasePath/linux" -Recurse -Force -ErrorAction SilentlyContinue
+          
+          # 进入 win32 删除不需要的架构 (删掉 arm64，只留 x64)
+          Remove-Item "$BasePath/win32/arm64" -Recurse -Force -ErrorAction SilentlyContinue
+
+      # 5. macOS 专属清理步骤 (Bash)
+      - name: Cleanup for macOS
+        if: runner.os == 'macOS'
+        run: |
+          # 1. 删除 fluent-ffmpeg 的 coverage
+          rm -rf node_modules/fluent-ffmpeg/coverage
+          
+          # 2. onnxruntime 清理逻辑
+          BASE_PATH="node_modules/onnxruntime-node/bin/napi-v6"
+          
+          # 删除不需要的平台文件夹 (删掉 linux 和 win32)
+          rm -rf "$BASE_PATH/linux"
+          rm -rf "$BASE_PATH/win32"
+          
+          # 进入 darwin 删除不需要的架构 (删掉 x64，只留 arm64)
+          rm -rf "$BASE_PATH/darwin/x64"
+
+      # 6. Windows 打包 (使用 7z 极限压缩)
+      - name: Zip for Windows
+        if: runner.os == 'Windows'
+        run: |
+          # -mx=9 代表最高压缩等级
+          7z a -tzip -mx=9 ${{ matrix.zip_name }} .
+
+      # 7. macOS 打包 (使用 zip 极限压缩)
+      - name: Zip for macOS
+        if: runner.os == 'macOS'
+        run: |
+          # -9 代表最高压缩等级，-x 排除 .git 和 .github 目录
+          zip -9 -r ${{ matrix.zip_name }} . -x "*.git*" ".github*"
+
+      # 8. 发布到 Release
+      - name: Upload binaries to release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: ${{ matrix.zip_name }}

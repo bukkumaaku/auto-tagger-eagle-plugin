@@ -4,13 +4,13 @@ let is_processing = false;
 let count_taggger = 0;
 let error_image = [];
 
-async function wait(ms) {
+ async function wait(ms) {
     return new Promise((resolve) => {
         setTimeout(resolve, ms);
     });
 }
 
-async function notification(message) {
+ async function notification(message) {
     // 发送通知
     sendNotification.notification.info({ title: message, duration: 3000 });
     await eagle.notification.show({
@@ -58,7 +58,7 @@ async function setTag(imageItems, tagListBatch) {
     }
 }
 
-async function startGetTag(config) {
+ async function startGetTag(config) {
     // 开始打标签
     const imagePath = [];
     count_taggger = 0;
@@ -91,7 +91,7 @@ async function startGetTag(config) {
     is_processing = false;
 }
 
-async function initialize(isAll) {
+ async function initialize(isAll) {
     // 初始化
     let items = await eagle.item.getSelected();
     if (items.length === 0 || isAll) {
@@ -103,7 +103,7 @@ async function initialize(isAll) {
     window.completeItem.value = 0;
 }
 
-async function checkConfigPath() {
+ async function checkConfigPath() {
     // 检查config.private.json是否存在
     if (fs.existsSync(__dirname + "/config.private.json")) {
         return __dirname + "/config.private.json";
@@ -111,17 +111,17 @@ async function checkConfigPath() {
     return __dirname + "/config.json";
 }
 
-async function getConfig() {
+ async function getConfig() {
     // 获取配置
     return JSON.parse(fs.readFileSync(await checkConfigPath(), "utf-8"));
 }
 
-async function setConfig(config) {
+ async function setConfig(config) {
     // 设置配置
     fs.writeFileSync(await checkConfigPath(), JSON.stringify(config, null, 2));
 }
 
-async function autotaggerFun(config) {
+ async function autotaggerFun(config) {
     if (config.autotagger === true) {
         let tmpData = JSON.parse(JSON.stringify(config));
         config.overwrite = "nocover";
