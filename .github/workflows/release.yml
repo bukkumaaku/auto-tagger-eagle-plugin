@@ -3,7 +3,7 @@ name: Build and Release
 on:
   push:
     tags:
-      - 'v*' # 匹配所有 v 开头的标签
+      - 'v*'
 
 permissions:
   contents: write
@@ -34,45 +34,73 @@ jobs:
           node-version: '20'
 
       - name: Install dependencies
+        # 只安装运行需要的包，不安装 devDependencies
         run: npm install --omit=dev
 
-      # Windows 清理 
+      # === Windows 清理步骤 (删除多余架构) ===
       - name: Cleanup for Windows
         if: runner.os == 'Windows'
         run: |
+          # 1. 删除 fluent-ffmpeg 的测试覆盖率文件
           if (Test-Path "node_modules/fluent-ffmpeg/coverage") { Remove-Item "node_modules/fluent-ffmpeg/coverage" -Recurse -Force }
+          
+          # 2. onnxruntime 清理: 只保留 win32/x64
           $BasePath = "node_modules/onnxruntime-node/bin/napi-v6"
           Remove-Item "$BasePath/darwin" -Recurse -Force -ErrorAction SilentlyContinue
           Remove-Item "$BasePath/linux" -Recurse -Force -ErrorAction SilentlyContinue
           Remove-Item "$BasePath/win32/arm64" -Recurse -Force -ErrorAction SilentlyContinue
+          # 顺便清理一下 .bin 快捷方式，Windows下用户用不到
+          if (Test-Path "node_modules/.bin") { Remove-Item "node_modules/.bin" -Recurse -Force }
 
-      # macOS 清理 
+      # === macOS 清理步骤 (删除多余架构) ===
       - name: Cleanup for macOS
         if: runner.os == 'macOS'
         run: |
           rm -rf node_modules/fluent-ffmpeg/coverage
+          
+          # onnxruntime 清理: 只保留 darwin/arm64
           BASE_PATH="node_modules/onnxruntime-node/bin/napi-v6"
           rm -rf "$BASE_PATH/linux"
           rm -rf "$BASE_PATH/win32"
           rm -rf "$BASE_PATH/darwin/x64"
+          
+          # 清理 .bin
+          rm -rf node_modules/.bin
 
-      # Windows 打包 
+      # === Windows 打包 (排除开发文件) ===
       - name: Zip for Windows
         if: runner.os == 'Windows'
-        run: 7z a -tzip -mx=9 ${{ matrix.zip_name }} .
+        run: |
+          # -xr! 表示递归排除文件
+          # 排除 git相关, github action配置, lock文件
+          7z a -tzip -mx=9 ${{ matrix.zip_name }} . `
+            -xr!.git `
+            -xr!.github `
+            -xr!.gitignore `
+            -xr!.gitattributes `
+            -xr!bun.lock `
+            -xr!bun.lockb `
+            -xr!package-lock.json `
+            -xr!.DS_Store
 
-      # macOS 打包 
+      # === macOS 打包 (排除开发文件) ===
       - name: Zip for macOS
         if: runner.os == 'macOS'
-        run: zip -9 -r ${{ matrix.zip_name }} . -x "*.git*" ".github*"
+        run: |
+          # -x 后面跟通配符排除模式
+          zip -9 -r ${{ matrix.zip_name }} . \
+            -x "*.git/*" \
+            -x "*.github/*" \
+            -x ".gitignore" \
+            -x ".gitattributes" \
+            -x "bun.lock*" \
+            -x "package-lock.json" \
+            -x ".DS_Store"
 
-      # 自动识别 tag 是否包含 'beta', 'alpha', 'rc', 'pre'
-      # 如果包含，prerelease 设为 true，否则为 false
       - name: Upload binaries to release
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: ${{ matrix.zip_name }}
-          # 如果 tag 名字里包含横杠（例如 v1.0.0-beta.1），通常就是预发布
           prerelease: ${{ contains(github.ref, '-') }}
           generate_release_notes: true
