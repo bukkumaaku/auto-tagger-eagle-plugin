@@ -74,14 +74,14 @@ jobs:
           # -xr! 表示递归排除文件
           # 排除 git相关, github action配置, lock文件
           7z a -tzip -mx=9 ${{ matrix.zip_name }} . `
-            -xr!.git `
-            -xr!.github `
-            -xr!.gitignore `
-            -xr!.gitattributes `
-            -xr!bun.lock `
-            -xr!bun.lockb `
-            -xr!package-lock.json `
-            -xr!.DS_Store
+            '-xr!.git' `
+            '-xr!.github' `
+            '-xr!.gitignore' `
+            '-xr!.gitattributes' `
+            '-xr!bun.lock' `
+            '-xr!bun.lockb' `
+            '-xr!package-lock.json' `
+            '-xr!.DS_Store'
 
       # === macOS 打包 (排除开发文件) ===
       - name: Zip for macOS
