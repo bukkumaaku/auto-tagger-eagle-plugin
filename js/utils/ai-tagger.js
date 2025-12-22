@@ -1,12 +1,123 @@
 const ort = require("onnxruntime-node");
 const csv = require("csv-parser");
-const fs = require("fs");
+const fs = require("fs-extra");
 const sharp = require("sharp");
 const path = require("path");
 const ffmpeg = require("fluent-ffmpeg");
 const video_ext = ["mp4", "avi", "mov", "mkv", "flv", "wmv"];
 
+const sizeSetting = 448;
 let wd_or_cl = "wd";
+
+class wdModel {
+    constructor(filePath) {
+        this.arr = [1, sizeSetting, sizeSetting, 3];
+        this.filePath = path.join(filePath, "selected_tags.csv");
+    }
+    async checkTagsFileExists() {
+        if (fs.existsSync(this.filePath, fs.constants.R_OK)) {
+            return await this.readTagsFile();
+        }
+    }
+    async readTagsFile() {
+        const result = [];
+        const csvData = await new Promise((resolve, reject) => {
+            fs.createReadStream(this.filePath)
+                .pipe(csv())
+                .on("data", (data) => {
+                    result.push(data);
+                })
+                .on("end", () => {
+                    resolve(result);
+                })
+                .on("error", (error) => {
+                    reject(error);
+                });
+        });
+        return csvData;
+    }
+    async preprocessImage(imagePath) {
+        let image = sharp(imagePath);
+        image = image.flatten();
+        image = image.resize({
+            width: sizeSetting,
+            height: sizeSetting,
+            fit: "contain",
+            background: { r: 0, g: 0, b: 0 },
+        });
+        const rawPixelData = await image.raw().toBuffer();
+        const channels = 3;
+        const inputData = new Float32Array(
+            sizeSetting * sizeSetting * channels
+        );
+        extraPreProcess(inputData, rawPixelData);
+    }
+    extraPreProcess(inputData, rawPixelData) {
+        for (let i = 0; i < rawPixelData.length; i += 3) {
+            for (let channel = 0; channel < 3; channel++) {
+                inputDataData[i + 2 - channel] = rawPixelData[i + channel] || 0;
+            }
+        }
+        inputData = Float32Array.from(inputData);
+        return inputData;
+    }
+    getClippedValue(cpuData) {
+        return cpuData;
+    }
+}
+
+class clModel extends wdModel {
+    constructor(filePath) {
+        super(filePath);
+        this.arr = [1, 3, sizeSetting, sizeSetting];
+        this.filePath = path.join(filePath, "tag_mapping.json");
+    }
+    async readTagsFile() {
+        const result = [];
+        const config = require(this.filePath);
+        const len = Object.keys(config).length;
+        for (let i = 0; i < len; i++) {
+            result.push({ name: config[i].tag });
+        }
+        return result;
+    }
+    async extraPreProcess(rawPixelData) {
+        const mean = 0.5;
+        const std = 0.5;
+        for (let y = 0; y < sizeSetting; y++) {
+            for (let x = 0; x < sizeSetting; x++) {
+                const i = (y * sizeSetting + x) * channels;
+                const r = rawPixelData[i];
+                const g = rawPixelData[i + 1];
+                const b = rawPixelData[i + 2];
+                const normalized_b = (b / 255.0 - mean) / std;
+                const normalized_g = (g / 255.0 - mean) / std;
+                const normalized_r = (r / 255.0 - mean) / std;
+                inputData[y * sizeSetting + x] = normalized_b;
+                inputData[sizeSetting * sizeSetting + y * sizeSetting + x] =
+                    normalized_g;
+                inputData[2 * sizeSetting * sizeSetting + y * sizeSetting + x] =
+                    normalized_r;
+            }
+        }
+        return inputData;
+    }
+    getClippedValue(cpuData) {
+        for (let i = 0; i < cpuData.length; i++) {
+            let value = cpuData[i];
+            if (isNaN(value)) {
+                value = 0.0;
+            } else if (value === Infinity) {
+                value = 1.0;
+            } else if (value === -Infinity) {
+                value = 0.0;
+            }
+            const clippedValue = Math.max(-30, Math.min(value, 30));
+            const prob = 1 / (1 + Math.exp(-clippedValue));
+            cpuData[i] = prob;
+        }
+    }
+}
 
 async function getCsvData(filePath) {
     const result = [];
@@ -342,7 +453,6 @@ async function getTag(
 }
 
 // 读取json文件
-const sizeSetting = 448;
 
 module.exports = async function aiTagger(images, imageItems, setTag, config) {
     // 计算时间
@@ -357,6 +467,7 @@ module.exports = async function aiTagger(images, imageItems, setTag, config) {
             "model.onnx"
         )
     );
+    
     const tagSet = await getCsvData(
         path.join(__dirname, "..", "..", "models", config.modelPath)
     );

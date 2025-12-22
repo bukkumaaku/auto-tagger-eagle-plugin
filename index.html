@@ -111,11 +111,15 @@
                     </n-form-item>
                     <!-- 模型位置 -->
                     <n-form-item label="模型位置" path="modelPath">
-                        <n-select
-                            v-model:value="formData.modelPath"
-                            :options="options"
-                        />
-                        <n-button @click="downloadModel">下载模型</n-button>
+                        <n-space>
+                            <n-select
+                                v-model:value="formData.modelPath"
+                                :options="options"
+                            ></n-select>
+                            <n-button type="primary" @click="showModal = true">
+                                打开模型下载窗口
+                            </n-button>
+                        </n-space>
                     </n-form-item>
                     <!-- 阈值 -->
                     <n-form-item label="阈值" path="threshold"
@@ -288,6 +292,7 @@
                     :close-on-esc="!isDownloading"
                     :closable="!isDownloading"
                     :on-close="handleCloseModal"
+                    style="width: 85%"
                 >
                     <n-space vertical size="large">
                         <n-card embedded :bordered="false" size="small">
@@ -330,13 +335,6 @@
                                 @click="startDownload"
                                 :disabled="!selectedModel"
                             >
-                                <template #icon>
-                                    <n-icon
-                                        ><div class="i-download-icon">
-                                            ⬇
-                                        </div></n-icon
-                                    >
-                                </template>
                                 开始下载
                             </n-button>
                         </div>
@@ -357,10 +355,7 @@
                                 <n-space vertical size="medium">
                                     <div class="progress-item">
                                         <div class="progress-label">
-                                            <span>📦 selected_tags.csv</span>
-                                            <span class="percentage"
-                                                >{{ progressTags }}%</span
-                                            >
+                                            <span>selected_tags.csv</span>
                                         </div>
                                         <n-progress
                                             type="line"
@@ -373,10 +368,7 @@
 
                                     <div class="progress-item">
                                         <div class="progress-label">
-                                            <span>🧠 model.onnx</span>
-                                            <span class="percentage"
-                                                >{{ progressModel }}%</span
-                                            >
+                                            <span> model.onnx</span>
                                         </div>
                                         <n-progress
                                             type="line"
@@ -463,11 +455,7 @@
                         const currentSpeed = ref("0 B/s");
                         const progressTags = ref(0);
                         const progressModel = ref(0);
-                        const selectedModel = ref({
-                            label: "wd-eva02-large-tagger-v3",
-                            value: "wd-eva02-large-tagger-v3",
-                            type: "wd",
-                        });
+                        const selectedModel = ref("wd-eva02-large-tagger-v3");
                         const modelOptions = [
                             {
                                 label: "wd-eva02-large-tagger-v3",
@@ -484,19 +472,19 @@
                                 value: "wd-v1-4-moat-tagger-v2",
                                 type: "wd",
                             },
-                            {
+                            /* {
                                 label: "cl-tagger",
                                 value: "cl-tagger",
                                 type: "cl",
-                            },
+                            }, */
                         ];
                         const handleCloseModal = () => {
                             showModal.value = false;
                         };
                         const onProgress = (percentage, speed, type) => {
                             if (type === "model")
-                                progressModel.value = percentage;
-                            else progressTags.value = percentage;
+                                progressModel.value = Number(percentage);
+                            else progressTags.value = Number(percentage);
                             currentSpeed.value = speed;
                         };
                         const startDownload = async () => {
@@ -504,11 +492,23 @@
                             progressTags.value = 0;
                             progressModel.value = 0;
                             currentSpeed.value = "Connecting...";
+                            let modelType = "";
+                            for (let i = 0; i < modelOptions.length; i++) {
+                                if (
+                                    modelOptions[i].value ===
+                                    selectedModel.value
+                                ) {
+                                    modelType = modelOptions[i].type;
+                                    break;
+                                }
+                            }
                             await downloadFile(
                                 selectedModel.value.value,
-                                selectedModel.value.type,
+                                downloadSource.value,
+                                modelType,
                                 onProgress
                             );
+                            await finishDownload();
                         };
                         const finishDownload = async () => {
                             isDownloading.value = false;

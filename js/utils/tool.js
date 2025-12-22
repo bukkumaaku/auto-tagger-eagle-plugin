@@ -1,4 +1,4 @@
-const fs = require("fs");
+const fs = require("fs-extra");
 
 let is_processing = false;
 let count_taggger = 0;
