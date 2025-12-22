@@ -1,5 +1,5 @@
 {
-	"name": "tagger",
+	"name": "auto-tagger-eagle-plugin",
 	"dependencies": {
 		"csv-parser": "^3.2.0",
 		"fluent-ffmpeg": "^2.1.3",

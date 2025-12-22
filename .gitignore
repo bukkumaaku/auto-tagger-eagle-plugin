@@ -35,5 +35,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 models/*
 !models/请将模型文件夹放在此处.txt
+!models/PLACE_THE_MODEL_FOLDER_HERE.txt
 
 config.private.json
