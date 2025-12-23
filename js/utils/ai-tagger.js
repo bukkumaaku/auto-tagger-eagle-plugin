@@ -7,22 +7,29 @@ const ffmpeg = require("fluent-ffmpeg");
 const video_ext = ["mp4", "avi", "mov", "mkv", "flv", "wmv"];
 
 const sizeSetting = 448;
-let wd_or_cl = "wd";
 
 class wdModel {
     constructor(filePath) {
-        this.arr = [1, sizeSetting, sizeSetting, 3];
-        this.filePath = path.join(filePath, "selected_tags.csv");
+        this._shape = [1, sizeSetting, sizeSetting, 3];
+        this.modelFolderPath = path.join(
+            __dirname,
+            "..",
+            "..",
+            "models",
+            filePath
+        );
+        this.modelPath = path.join(this.modelFolderPath, "model.onnx");
+        this.tagsPath = path.join(this.modelFolderPath, "selected_tags.csv");
     }
     async checkTagsFileExists() {
-        if (fs.existsSync(this.filePath, fs.constants.R_OK)) {
+        if (fs.existsSync(this.tagsPath, fs.constants.R_OK)) {
             return await this.readTagsFile();
         }
     }
     async readTagsFile() {
         const result = [];
         const csvData = await new Promise((resolve, reject) => {
-            fs.createReadStream(this.filePath)
+            fs.createReadStream(this.tagsPath)
                 .pipe(csv())
                 .on("data", (data) => {
                     result.push(data);
@@ -50,40 +57,44 @@ class wdModel {
         const inputData = new Float32Array(
             sizeSetting * sizeSetting * channels
         );
-        extraPreProcess(inputData, rawPixelData);
+        return this.extraPreProcess(inputData, rawPixelData);
     }
     extraPreProcess(inputData, rawPixelData) {
         for (let i = 0; i < rawPixelData.length; i += 3) {
             for (let channel = 0; channel < 3; channel++) {
-                inputDataData[i + 2 - channel] = rawPixelData[i + channel] || 0;
+                inputData[i + 2 - channel] = rawPixelData[i + channel] || 0;
             }
         }
-        inputData = Float32Array.from(inputData);
+        //inputData = Float32Array.from(inputData);
         return inputData;
     }
     getClippedValue(cpuData) {
         return cpuData;
+    }
+    get arr() {
+        return [...this._shape];
     }
 }
 
 class clModel extends wdModel {
     constructor(filePath) {
         super(filePath);
-        this.arr = [1, 3, sizeSetting, sizeSetting];
-        this.filePath = path.join(filePath, "tag_mapping.json");
+        this._shape = [1, 3, sizeSetting, sizeSetting];
+        this.tagsPath = path.join(this.modelFolderPath, "tag_mapping.json");
     }
     async readTagsFile() {
         const result = [];
-        const config = require(this.filePath);
+        const config = require(this.tagsPath);
         const len = Object.keys(config).length;
         for (let i = 0; i < len; i++) {
             result.push({ name: config[i].tag });
         }
         return result;
     }
-    async extraPreProcess(rawPixelData) {
+    extraPreProcess(inputData, rawPixelData) {
         const mean = 0.5;
         const std = 0.5;
+        const channels = 3;
         for (let y = 0; y < sizeSetting; y++) {
             for (let x = 0; x < sizeSetting; x++) {
                 const i = (y * sizeSetting + x) * channels;
@@ -116,50 +127,10 @@ class clModel extends wdModel {
             const prob = 1 / (1 + Math.exp(-clippedValue));
             cpuData[i] = prob;
         }
+        return cpuData;
     }
 }
 
-async function getCsvData(filePath) {
-    const result = [];
-    if (
-        fs.existsSync(
-            path.join(filePath, "selected_tags.csv"),
-            fs.constants.R_OK
-        )
-    ) {
-        wd_or_cl = "wd";
-        filePath = path.join(filePath, "selected_tags.csv");
-        const csvData = await new Promise((resolve, reject) => {
-            fs.createReadStream(filePath)
-                .pipe(csv())
-                .on("data", (data) => {
-                    result.push(data);
-                })
-                .on("end", () => {
-                    resolve(result);
-                })
-                .on("error", (error) => {
-                    reject(error);
-                });
-        });
-        return csvData;
-    } else if (
-        fs.existsSync(
-            path.join(filePath, "tag_mapping.json"),
-            fs.constants.R_OK
-        )
-    ) {
-        wd_or_cl = "cl";
-        filePath = path.join(filePath, "tag_mapping.json");
-
-        const config = require(filePath);
-        const len = Object.keys(config).length;
-        for (let i = 0; i < len; i++) {
-            result.push({ name: config[i].tag });
-        }
-    }
-    return result;
-}
 async function createSession(modelPath) {
     const executionProviders = [];
     if (eagle.os.type() === "Windows_NT") {
@@ -186,100 +157,15 @@ async function createSession(modelPath) {
     });
 }
 
-function postProcessLogits(logitsData) {
-    const CLIP_MIN = -30.0;
-    const CLIP_MAX = 30.0;
-    const probabilities = logitsData.map((logit) => {
-        let value = logit;
-        if (isNaN(value)) {
-            value = 0.0;
-        } else if (value === Infinity) {
-            value = 1.0;
-        } else if (value === -Infinity) {
-            value = 0.0;
-        }
-        const clippedValue = Math.max(CLIP_MIN, Math.min(CLIP_MAX, value));
-        return 1 / (1 + Math.exp(-clippedValue));
-    });
-    return Float32Array.from(probabilities);
-}
-
-async function preprocessImage(imagePath) {
-    try {
-        let image = sharp(imagePath);
-        if (wd_or_cl === "cl") {
-            image = image.flatten({ background: "#000000" });
-            image = image.resize({
-                width: sizeSetting,
-                height: sizeSetting,
-                fit: "contain",
-                background: { r: 0, g: 0, b: 0 },
-            });
-            const rawPixelData = await image.raw().toBuffer();
-            const channels = 3;
-            const inputData = new Float32Array(
-                sizeSetting * sizeSetting * channels
-            );
-
-            const mean = 0.5;
-            const std = 0.5;
-            for (let y = 0; y < sizeSetting; y++) {
-                for (let x = 0; x < sizeSetting; x++) {
-                    const i = (y * sizeSetting + x) * channels;
-                    const r = rawPixelData[i];
-                    const g = rawPixelData[i + 1];
-                    const b = rawPixelData[i + 2];
-                    const normalized_b = (b / 255.0 - mean) / std;
-                    const normalized_g = (g / 255.0 - mean) / std;
-                    const normalized_r = (r / 255.0 - mean) / std;
-                    inputData[y * sizeSetting + x] = normalized_b;
-                    inputData[sizeSetting * sizeSetting + y * sizeSetting + x] =
-                        normalized_g;
-                    inputData[
-                        2 * sizeSetting * sizeSetting + y * sizeSetting + x
-                    ] = normalized_r;
-                }
-            }
-
-            return inputData;
-        } else {
-            image = image.flatten();
-            image = image.resize({
-                width: sizeSetting,
-                height: sizeSetting,
-                fit: "contain",
-                background: { r: 0, g: 0, b: 0 },
-            });
-            const channels = 3;
-            const imageData = await image.raw().toBuffer();
-            const reshapedData = new Uint8Array(
-                sizeSetting * sizeSetting * channels
-            );
-            for (let i = 0; i < imageData.length; i += 3) {
-                for (let channel = 0; channel < 3; channel++) {
-                    reshapedData[i + 2 - channel] = imageData[i + channel] || 0;
-                }
-            }
-            const inputData = Float32Array.from(reshapedData);
-            return inputData;
-        }
-    } catch (error) {
-        console.error("无法处理图像:", imagePath, error);
-        return [];
-    }
-}
-async function runInference(imagePath) {
+async function runInference(imagePath, modelInfo) {
     const results = [];
     for (let i = 0; i < imagePath.length; i++) {
-        const floatData = await preprocessImage(imagePath[i]);
+        const floatData = await modelInfo.preprocessImage(imagePath[i]);
         if (floatData.length === 0) {
             results.push([]);
             continue;
         }
-        let arr = [1, sizeSetting, sizeSetting, 3];
-        if (wd_or_cl === "cl") {
-            arr = [1, 3, sizeSetting, sizeSetting];
-        }
+        const arr = modelInfo.arr;
         const tensor = new ort.Tensor("float32", floatData, arr);
         results.push(tensor);
     }
@@ -333,9 +219,10 @@ async function getTag(
     tagSet,
     config,
     imageItemsBatchs,
+    modelInfo,
     isRecursion = false
 ) {
-    const results = await runInference(imagePath);
+    const results = await runInference(imagePath, modelInfo);
     let resultsLength = results.length;
     //if (results[0]?.data === undefined) return [];
     const occupy = [];
@@ -363,10 +250,8 @@ async function getTag(
         offset += tensor.data.length;
     }
     // 运行模型
-    let arr = [imagePath.length, sizeSetting, sizeSetting, 3];
-    if (wd_or_cl === "cl") {
-        arr = [imagePath.length, 3, sizeSetting, sizeSetting];
-    }
+    const arr = modelInfo.arr;
+    arr[0] = imagePath.length;
     const batchTensor = new ort.Tensor("float32", concatenatedData, arr);
     const feeds = {};
     if (session.inputNames[0]) {
@@ -379,21 +264,7 @@ async function getTag(
         result?.output?.cpuData ||
         result?.predictions_sigmoid?.cpuData ||
         result?.output0?.cpuData;
-    if (wd_or_cl === "cl") {
-        for (let i = 0; i < cpuData.length; i++) {
-            let value = cpuData[i];
-            if (isNaN(value)) {
-                value = 0.0;
-            } else if (value === Infinity) {
-                value = 1.0;
-            } else if (value === -Infinity) {
-                value = 0.0;
-            }
-            const clippedValue = Math.max(-30, Math.min(value, 30));
-            const prob = 1 / (1 + Math.exp(-clippedValue));
-            cpuData[i] = prob;
-        }
-    }
+    cpuData = modelInfo.getClippedValue(cpuData);
     const perBatchSize = cpuData.length / imagePath.length;
     let ans = [];
     for (let i = 0; i < imagePath.length; i++) {
@@ -431,6 +302,7 @@ async function getTag(
                     tagSet,
                     config,
                     [imageItemsBatchs[i]],
+                    modelInfo,
                     true
                 );
                 tag1[0].forEach((element) => {
@@ -445,32 +317,23 @@ async function getTag(
     }
     for (let i = 0; i < occupy.length; i++) {
         if (occupy[i] === 0) {
-            //在ans第i位插入[]
             ans.splice(i, 0, []);
         }
     }
     return ans;
 }
 
-// 读取json文件
-
 module.exports = async function aiTagger(images, imageItems, setTag, config) {
     // 计算时间
     console.time("aiTagger");
-    const session = await createSession(
-        path.join(
-            __dirname,
-            "..",
-            "..",
-            "models",
-            config.modelPath,
-            "model.onnx"
-        )
-    );
-    
-    const tagSet = await getCsvData(
-        path.join(__dirname, "..", "..", "models", config.modelPath)
-    );
+    let modelInfo;
+    if (config.modelPath.includes("wd")) {
+        modelInfo = new wdModel(config.modelPath);
+    } else {
+        modelInfo = new clModel(config.modelPath);
+    }
+    const session = await createSession(modelInfo.modelPath);
+    const tagSet = await modelInfo.checkTagsFileExists();
     let step = config.steps;
     let imageBatchs = [];
     let imageItemsBatchs = [];
@@ -491,7 +354,8 @@ module.exports = async function aiTagger(images, imageItems, setTag, config) {
                 session,
                 tagSet,
                 config,
-                imageItemsBatchs
+                imageItemsBatchs,
+                modelInfo
             );
             await setTag(imageItemsBatchs, tag);
             countStep = 0;
@@ -505,7 +369,8 @@ module.exports = async function aiTagger(images, imageItems, setTag, config) {
             session,
             tagSet,
             config,
-            imageItemsBatchs
+            imageItemsBatchs,
+            modelInfo
         );
         await setTag(imageItemsBatchs, tag);
         countStep = 0;
