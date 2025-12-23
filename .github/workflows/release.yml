@@ -1,106 +1,113 @@
 name: Build and Release
 
 on:
-  push:
-    tags:
-      - 'v*'
+    push:
+        tags:
+            - "v*"
 
 permissions:
-  contents: write
+    contents: write
 
 jobs:
-  build:
-    name: Build on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: windows-latest
-            platform_name: win32
-            keep_arch: x64
-            zip_name: auto-tagger-eagle-plugin-win-x64.zip
-          - os: macos-14
-            platform_name: darwin
-            keep_arch: arm64
-            zip_name: auto-tagger-eagle-plugin-mac-arm64.zip
+    build:
+        name: Build on ${{ matrix.os }}
+        runs-on: ${{ matrix.os }}
+        strategy:
+            matrix:
+                include:
+                    - os: windows-latest
+                      platform_name: win32
+                      keep_arch: x64
+                      # 修改后缀为 .eagleplugin，方便用户双击安装
+                      zip_name: auto-tagger-eagle-plugin-win-x64.eagleplugin
+                    - os: macos-14
+                      platform_name: darwin
+                      keep_arch: arm64
+                      # 修改后缀为 .eagleplugin
+                      zip_name: auto-tagger-eagle-plugin-mac-arm64.eagleplugin
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "20"
 
-      - name: Install dependencies
-        # 只安装运行需要的包，不安装 devDependencies
-        run: npm install --omit=dev
+            - name: Install dependencies
+              # 仅安装生产依赖
+              run: npm install --omit=dev
 
-      # === Windows 清理步骤 (删除多余架构) ===
-      - name: Cleanup for Windows
-        if: runner.os == 'Windows'
-        run: |
-          # 1. 删除 fluent-ffmpeg 的测试覆盖率文件
-          if (Test-Path "node_modules/fluent-ffmpeg/coverage") { Remove-Item "node_modules/fluent-ffmpeg/coverage" -Recurse -Force }
-          
-          # 2. onnxruntime 清理: 只保留 win32/x64
-          $BasePath = "node_modules/onnxruntime-node/bin/napi-v6"
-          Remove-Item "$BasePath/darwin" -Recurse -Force -ErrorAction SilentlyContinue
-          Remove-Item "$BasePath/linux" -Recurse -Force -ErrorAction SilentlyContinue
-          Remove-Item "$BasePath/win32/arm64" -Recurse -Force -ErrorAction SilentlyContinue
-          # 顺便清理一下 .bin 快捷方式，Windows下用户用不到
-          if (Test-Path "node_modules/.bin") { Remove-Item "node_modules/.bin" -Recurse -Force }
+            # === Windows 清理步骤 ===
+            - name: Cleanup for Windows
+              if: runner.os == 'Windows'
+              run: |
+                  # 1. 删除 fluent-ffmpeg 的覆盖率文件
+                  if (Test-Path "node_modules/fluent-ffmpeg/coverage") { Remove-Item "node_modules/fluent-ffmpeg/coverage" -Recurse -Force }
 
-      # === macOS 清理步骤 (删除多余架构) ===
-      - name: Cleanup for macOS
-        if: runner.os == 'macOS'
-        run: |
-          rm -rf node_modules/fluent-ffmpeg/coverage
-          
-          # onnxruntime 清理: 只保留 darwin/arm64
-          BASE_PATH="node_modules/onnxruntime-node/bin/napi-v6"
-          rm -rf "$BASE_PATH/linux"
-          rm -rf "$BASE_PATH/win32"
-          rm -rf "$BASE_PATH/darwin/x64"
-          
-          # 清理 .bin
-          rm -rf node_modules/.bin
+                  # 2. onnxruntime 清理: 只保留 win32/x64
+                  $BasePath = "node_modules/onnxruntime-node/bin/napi-v6"
+                  Remove-Item "$BasePath/darwin" -Recurse -Force -ErrorAction SilentlyContinue
+                  Remove-Item "$BasePath/linux" -Recurse -Force -ErrorAction SilentlyContinue
+                  Remove-Item "$BasePath/win32/arm64" -Recurse -Force -ErrorAction SilentlyContinue
+                  # 清理 .bin 目录
+                  if (Test-Path "node_modules/.bin") { Remove-Item "node_modules/.bin" -Recurse -Force }
 
-      # === Windows 打包 (排除开发文件) ===
-      - name: Zip for Windows
-        if: runner.os == 'Windows'
-        run: |
-          # -xr! 表示递归排除文件
-          # 排除 git相关, github action配置, lock文件
-          7z a -tzip -mx=9 ${{ matrix.zip_name }} . `
-            '-xr!.git' `
-            '-xr!.github' `
-            '-xr!.gitignore' `
-            '-xr!.gitattributes' `
-            '-xr!bun.lock' `
-            '-xr!bun.lockb' `
-            '-xr!package-lock.json' `
-            '-xr!.DS_Store'
+            # === macOS 清理步骤 ===
+            - name: Cleanup for macOS
+              if: runner.os == 'macOS'
+              run: |
+                  rm -rf node_modules/fluent-ffmpeg/coverage
 
-      # === macOS 打包 (排除开发文件) ===
-      - name: Zip for macOS
-        if: runner.os == 'macOS'
-        run: |
-          # -x 后面跟通配符排除模式
-          zip -9 -r ${{ matrix.zip_name }} . \
-            -x "*.git/*" \
-            -x "*.github/*" \
-            -x ".gitignore" \
-            -x ".gitattributes" \
-            -x "bun.lock*" \
-            -x "package-lock.json" \
-            -x ".DS_Store"
+                  # onnxruntime 清理: 只保留 darwin/arm64
+                  BASE_PATH="node_modules/onnxruntime-node/bin/napi-v6"
+                  rm -rf "$BASE_PATH/linux"
+                  rm -rf "$BASE_PATH/win32"
+                  rm -rf "$BASE_PATH/darwin/x64"
 
-      - name: Upload binaries to release
-        uses: softprops/action-gh-release@v1
-        if: startsWith(github.ref, 'refs/tags/')
-        with:
-          files: ${{ matrix.zip_name }}
-          prerelease: ${{ contains(github.ref, '-') }}
-          generate_release_notes: true
+                  # 清理 .bin 目录
+                  rm -rf node_modules/.bin
+
+            # === Windows 打包 (直接生成 .eagleplugin) ===
+            - name: Zip for Windows
+              if: runner.os == 'Windows'
+              run: |
+                  # 7-Zip 可以直接生成指定后缀的 zip 格式包
+                  # 注意排除参数加了引号，防止 PowerShell 解析错误
+                  7z a -tzip -mx=9 "${{ matrix.zip_name }}" . `
+                    '-xr!.git' `
+                    '-xr!.github' `
+                    '-xr!.gitignore' `
+                    '-xr!.gitattributes' `
+                    '-xr!bun.lock' `
+                    '-xr!bun.lockb' `
+                    '-xr!package-lock.json' `
+                    '-xr!.DS_Store'
+
+            # === macOS 打包 (先 zip 再改名) ===
+            - name: Zip for macOS
+              if: runner.os == 'macOS'
+              run: |
+                  # 这里的逻辑是：先打成 temp.zip，然后重命名。
+                  # 原因是直接指定 .eagleplugin 后缀，zip 命令可能会强制追加 .zip 变成 .eagleplugin.zip
+                  zip -9 -r temp.zip . \
+                    -x "*.git/*" \
+                    -x "*.github/*" \
+                    -x ".gitignore" \
+                    -x ".gitattributes" \
+                    -x "bun.lock*" \
+                    -x "package-lock.json" \
+                    -x ".DS_Store"
+
+                  # 重命名为最终目标文件名
+                  mv temp.zip "${{ matrix.zip_name }}"
+
+            # === 发布上传 ===
+            - name: Upload binaries to release
+              uses: softprops/action-gh-release@v1
+              if: startsWith(github.ref, 'refs/tags/')
+              with:
+                  files: ${{ matrix.zip_name }}
+                  prerelease: ${{ contains(github.ref, '-') }}
+                  generate_release_notes: true
