@@ -111,15 +111,18 @@
                     </n-form-item>
                     <!-- 模型位置 -->
                     <n-form-item label="模型位置" path="modelPath">
-                        <n-space>
-                            <n-select
-                                v-model:value="formData.modelPath"
-                                :options="options"
-                            ></n-select>
-                            <n-button type="primary" @click="showModal = true">
-                                打开模型下载窗口
-                            </n-button>
-                        </n-space>
+                        <n-select
+                            v-model:value="formData.modelPath"
+                            :options="options"
+                            style="width: 70%"
+                        ></n-select>
+                        <n-button
+                            type="primary"
+                            @click="showModal = true"
+                            style="margin: auto; margin-right: 0px"
+                        >
+                            模型下载窗口
+                        </n-button>
                     </n-form-item>
                     <!-- 阈值 -->
                     <n-form-item label="阈值" path="threshold"
@@ -468,6 +471,11 @@
                                 type: "wd",
                             },
                             {
+                                label: "wd-vit-large-tagger-v3",
+                                value: "wd-vit-large-tagger-v3",
+                                type: "wd",
+                            },
+                            {
                                 label: "wd-v1-4-moat-tagger-v2",
                                 value: "wd-v1-4-moat-tagger-v2",
                                 type: "wd",
@@ -503,7 +511,7 @@
                                 }
                             }
                             await downloadFile(
-                                selectedModel.value.value,
+                                selectedModel.value,
                                 downloadSource.value,
                                 modelType,
                                 onProgress
@@ -512,6 +520,14 @@
                         };
                         const finishDownload = async () => {
                             isDownloading.value = false;
+                            alert(
+                                "模型下载完成，软件将刷新以应用新模型",
+                                "下载完成",
+                                {
+                                    type: "success",
+                                }
+                            );
+                            window.location.reload();
                         };
                         window.options = options;
                         window.formData = formData;

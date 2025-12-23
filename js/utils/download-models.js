@@ -21,6 +21,7 @@ const DOWNLOAD_LIST = {
 async function downloadFile(modelName, downloadWebsite, type, onProgress) {
     const downloadUrl =
         downloadWebsite === "mirror" ? BASE_URL.mirror : BASE_URL.direct;
+    console.log(`Preparing to download ${MODEL_DIR} from ${modelName}`);
     await fs.ensureDir(path.join(MODEL_DIR, modelName));
     const modelFileName = DOWNLOAD_LIST[type].model;
     const tagsFileName = DOWNLOAD_LIST[type].tags;
