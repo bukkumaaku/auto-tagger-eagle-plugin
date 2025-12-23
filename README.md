@@ -1,6 +1,7 @@
 # Auto Tagger Plugin for Eagle
 
 ## Eagle 自动打标插件
+
 为 Eagle 资源库中有缩略图的文件自动生成描述性标签。无需安装 Python 或 Node.js 环境，下载即用。支持 GPU 加速（DirectML/WebGPU）与 CPU 自动回退。
 
 ### ✨ 功能特性
@@ -15,17 +16,16 @@
 ### 📥 安装指南
 
 1. 下载插件
-   请前往 Releases 页面 下载最新版本的压缩包：
+   请前往 Releases 页面 下载最新版本的插件格式：
 
--   Windows 用户: 下载 auto-tagger-eagle-plugin-win-x64.zip
--   macOS 用户: 下载 auto-tagger-eagle-plugin-mac-arm64.zip (仅支持 Apple Silicon M1/M2/M3...)
+-   Windows 用户: 下载 auto-tagger-eagle-plugin-win-x64.eagleplugin
+-   macOS 用户: 下载 auto-tagger-eagle-plugin-mac-arm64.eagleplugin (仅支持 Apple Silicon M1/M2/M3...)
 
 2. 导入 Eagle
 
--   解压下载的 .zip 文件。
+-   解压下载的 .eagleplugin 文件。
 -   打开 Eagle 软件。
--   点击左侧边栏的 “插件中心” (Plugin) > “管理插件”。
--   点击 “导入插件”，选择刚才解压出来的文件夹即可。
+-   将 .eagleplugin 文件拖入 eagle 内，并点击 install 即可
     > 系统要求：
     >
     > -   Windows 10/11 x64
@@ -33,6 +33,7 @@
     > -   Eagle App v4.0 及以上版本
 
 ### 🧠 模型配置
+
 本插件需配合模型文件使用。为了减小体积，插件包内不包含预训练模型，请按需下载。
 
 1. 获取模型
@@ -43,7 +44,9 @@
 -   其他：CL-Tagger (需配合 json 映射表)
 
 2. 放置模型
+
 -   将下载的文件放入插件目录下的 models 文件夹中。推荐结构如下：
+
 ```
    auto-tagger-eagle-plugin/
    └── models/
@@ -53,7 +56,7 @@
    └── wd-vit-tagger-v3/
    ├── model.onnx
    └── selected_tags.csv
-   ```
+```
 
 注：cL-tagger 模型文件夹下放置的是 model.onnx 和 tag_mapping.json
 
@@ -87,10 +90,13 @@ cd auto-tagger-eagle-plugin
 ```
 
 #### 2. 安装依赖
+
 ```
 npm install
 ```
+
 ### 🤝 贡献与反馈
+
 遇到问题或有新功能建议？欢迎提交 Issues。
 提交 Issue 时请提供：
 
