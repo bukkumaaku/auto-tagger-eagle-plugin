@@ -3,30 +3,42 @@ const https = require("https");
 const path = require("path");
 
 const BASE_URL = {
-    mirror: "https://hf-mirror.com/SmilingWolf/",
-    direct: "https://huggingface.co/SmilingWolf/",
+    mirror: "https://hf-mirror.com",
+    direct: "https://huggingface.co",
 };
 const MODEL_DIR = __dirname + "/models";
 const DOWNLOAD_LIST = {
     wd: {
         model: "model.onnx",
         tags: "selected_tags.csv",
+        author: "SmilingWolf",
+        extra: "",
     },
     cl: {
         model: "model.onnx",
         tags: "tag_mapping.json",
+        author: "cella110n",
+        extra: "cl_tagger_1_02/",
+    },
+    ca: {
+        model: "camie-tagger-v2.onnx",
+        tags: "camie-tagger-v2-metadata.json",
+        author: "Camais03",
+        extra: "",
     },
 };
-
+let downloadUrl;
 async function downloadFile(modelName, downloadWebsite, type, onProgress) {
-    const downloadUrl =
+    downloadUrl =
         downloadWebsite === "mirror" ? BASE_URL.mirror : BASE_URL.direct;
     console.log(`Preparing to download ${MODEL_DIR} from ${modelName}`);
     await fs.ensureDir(path.join(MODEL_DIR, modelName));
     const modelFileName = DOWNLOAD_LIST[type].model;
     const tagsFileName = DOWNLOAD_LIST[type].tags;
-    const modelUrl = `${downloadUrl}${modelName}/resolve/main/${modelFileName}`;
-    const tagsUrl = `${downloadUrl}${modelName}/resolve/main/${tagsFileName}`;
+    const authorName = DOWNLOAD_LIST[type].author;
+    const extraDir = DOWNLOAD_LIST[type].extra;
+    const modelUrl = `${downloadUrl}/${authorName}/${modelName}/resolve/main/${extraDir}${modelFileName}`;
+    const tagsUrl = `${downloadUrl}/${authorName}/${modelName}/resolve/main/${extraDir}${tagsFileName}`;
     console.log(path.join(MODEL_DIR, modelName, modelFileName));
     if (
         (await fs.pathExists(path.join(MODEL_DIR, modelName, modelFileName))) &&
@@ -42,11 +54,17 @@ async function downloadFile(modelName, downloadWebsite, type, onProgress) {
         console.log(`Downloading ${modelName} model and tags...`);
     }
     console.log(`Downloading ${modelUrl}...`);
-    await downloadProcess(tagsUrl, modelName, tagsFileName, onProgress);
-    await downloadProcess(modelUrl, modelName, modelFileName, onProgress);
+    await downloadProcess(tagsUrl, modelName, tagsFileName, onProgress, "tags");
+    await downloadProcess(
+        modelUrl,
+        modelName,
+        modelFileName,
+        onProgress,
+        "model"
+    );
 }
 
-async function downloadProcess(url, modelName, fileName, onProgress) {
+async function downloadProcess(url, modelName, fileName, onProgress, type) {
     return new Promise((resolve, reject) => {
         // 定义一个内部函数，用来处理可能的重定向
         const makeRequest = (currentUrl) => {
@@ -65,7 +83,7 @@ async function downloadProcess(url, modelName, fileName, onProgress) {
                             !currentUrl.startsWith("http://") &&
                             !currentUrl.startsWith("https://")
                         ) {
-                            currentUrl = "https://hf-mirror.com" + currentUrl;
+                            currentUrl = downloadUrl + currentUrl;
                         }
                         makeRequest(currentUrl);
                         return;
@@ -111,19 +129,11 @@ async function downloadProcess(url, modelName, fileName, onProgress) {
                               )
                             : 0;
 
-                        onProgress(
-                            progress,
-                            speed + " MB/s",
-                            fileName.endsWith(".onnx") ? "model" : "tags"
-                        );
+                        onProgress(progress, speed + " MB/s", type);
                     });
 
                     response.pipe(writer);
-                    onProgress(
-                        100,
-                        "0 MB/s",
-                        fileName.endsWith(".onnx") ? "model" : "tags"
-                    );
+                    onProgress(100, "0 MB/s", type);
                     writer.on("finish", () => {
                         writer.close(resolve);
                     });

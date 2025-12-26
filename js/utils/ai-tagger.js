@@ -6,11 +6,10 @@ const path = require("path");
 const ffmpeg = require("fluent-ffmpeg");
 const video_ext = ["mp4", "avi", "mov", "mkv", "flv", "wmv"];
 
-const sizeSetting = 448;
-
 class wdModel {
     constructor(filePath) {
-        this._shape = [1, sizeSetting, sizeSetting, 3];
+        this.sizeSetting = 448;
+        this._shape = [1, this.sizeSetting, this.sizeSetting, 3];
         this.modelFolderPath = path.join(
             __dirname,
             "..",
@@ -47,15 +46,15 @@ class wdModel {
         let image = sharp(imagePath);
         image = image.flatten();
         image = image.resize({
-            width: sizeSetting,
-            height: sizeSetting,
+            width: this.sizeSetting,
+            height: this.sizeSetting,
             fit: "contain",
             background: { r: 0, g: 0, b: 0 },
         });
         const rawPixelData = await image.raw().toBuffer();
         const channels = 3;
         const inputData = new Float32Array(
-            sizeSetting * sizeSetting * channels
+            this.sizeSetting * this.sizeSetting * channels
         );
         return this.extraPreProcess(inputData, rawPixelData);
     }
@@ -65,7 +64,6 @@ class wdModel {
                 inputData[i + 2 - channel] = rawPixelData[i + channel] || 0;
             }
         }
-        //inputData = Float32Array.from(inputData);
         return inputData;
     }
     getClippedValue(cpuData) {
@@ -79,7 +77,7 @@ class wdModel {
 class clModel extends wdModel {
     constructor(filePath) {
         super(filePath);
-        this._shape = [1, 3, sizeSetting, sizeSetting];
+        this._shape = [1, 3, this.sizeSetting, this.sizeSetting];
         this.tagsPath = path.join(this.modelFolderPath, "tag_mapping.json");
     }
     async readTagsFile() {
@@ -95,20 +93,26 @@ class clModel extends wdModel {
         const mean = 0.5;
         const std = 0.5;
         const channels = 3;
-        for (let y = 0; y < sizeSetting; y++) {
-            for (let x = 0; x < sizeSetting; x++) {
-                const i = (y * sizeSetting + x) * channels;
+        for (let y = 0; y < this.sizeSetting; y++) {
+            for (let x = 0; x < this.sizeSetting; x++) {
+                const i = (y * this.sizeSetting + x) * channels;
                 const r = rawPixelData[i];
                 const g = rawPixelData[i + 1];
                 const b = rawPixelData[i + 2];
                 const normalized_b = (b / 255.0 - mean) / std;
                 const normalized_g = (g / 255.0 - mean) / std;
                 const normalized_r = (r / 255.0 - mean) / std;
-                inputData[y * sizeSetting + x] = normalized_b;
-                inputData[sizeSetting * sizeSetting + y * sizeSetting + x] =
-                    normalized_g;
-                inputData[2 * sizeSetting * sizeSetting + y * sizeSetting + x] =
-                    normalized_r;
+                inputData[y * this.sizeSetting + x] = normalized_b;
+                inputData[
+                    this.sizeSetting * this.sizeSetting +
+                        y * this.sizeSetting +
+                        x
+                ] = normalized_g;
+                inputData[
+                    2 * this.sizeSetting * this.sizeSetting +
+                        y * this.sizeSetting +
+                        x
+                ] = normalized_r;
             }
         }
         return inputData;
@@ -128,6 +132,47 @@ class clModel extends wdModel {
             cpuData[i] = prob;
         }
         return cpuData;
+    }
+}
+
+class caModel extends clModel {
+    constructor(filePath) {
+        super(filePath);
+        this.sizeSetting = 512;
+        this._shape = [1, 3, this.sizeSetting, this.sizeSetting];
+        this.tagsPath = path.join(
+            this.modelFolderPath,
+            "camie-tagger-v2-metadata.json"
+        );
+        this.modelPath = path.join(
+            this.modelFolderPath,
+            "camie-tagger-v2.onnx"
+        );
+    }
+
+    async readTagsFile() {
+        const config = require(this.tagsPath);
+        const mapping = config.dataset_info.tag_mapping.idx_to_tag;
+        return mapping;
+    }
+
+    extraPreProcess(inputData, rawPixelData) {
+        const mean = [0.485, 0.456, 0.406];
+        const std = [0.229, 0.224, 0.225];
+        const imageSize = this.sizeSetting * this.sizeSetting;
+        for (let i = 0; i < imageSize; i++) {
+            const offset = i * 3;
+            const r = rawPixelData[offset];
+            const g = rawPixelData[offset + 1];
+            const b = rawPixelData[offset + 2];
+            const normalized_r = (r / 255.0 - mean[0]) / std[0];
+            const normalized_g = (g / 255.0 - mean[1]) / std[1];
+            const normalized_b = (b / 255.0 - mean[2]) / std[2];
+            inputData[i] = normalized_r;
+            inputData[imageSize + i] = normalized_g;
+            inputData[2 * imageSize + i] = normalized_b;
+        }
+        return inputData;
     }
 }
 
@@ -242,7 +287,7 @@ async function getTag(
     }
     if (imagePath.length === 0) return [[]];
     const concatenatedData = new Float32Array(
-        imagePath.length * 3 * sizeSetting * sizeSetting
+        imagePath.length * 3 * modelInfo.sizeSetting * modelInfo.sizeSetting
     );
     let offset = 0;
     for (const tensor of results) {
@@ -259,11 +304,13 @@ async function getTag(
     }
     const result = await session.run(feeds);
     if (result === undefined) return [[]];
+    console.log(result);
     let cpuData =
         result?.output?.data ||
         result?.output?.cpuData ||
         result?.predictions_sigmoid?.cpuData ||
-        result?.output0?.cpuData;
+        result?.output0?.cpuData ||
+        result?.refined_predictions.cpuData;
     cpuData = modelInfo.getClippedValue(cpuData);
     const perBatchSize = cpuData.length / imagePath.length;
     let ans = [];
@@ -271,7 +318,7 @@ async function getTag(
         let tag = [];
         for (let j = 0; j < perBatchSize; j++) {
             if (cpuData[i * perBatchSize + j] > config.threshold) {
-                tag.push(tagSet[j].name);
+                tag.push(tagSet[j].name || tagSet[j]);
             }
         }
         if (
@@ -327,10 +374,12 @@ module.exports = async function aiTagger(images, imageItems, setTag, config) {
     // 计算时间
     console.time("aiTagger");
     let modelInfo;
-    if (config.modelPath.includes("wd")) {
+    if (config.modelPath.toLowerCase().includes("wd")) {
         modelInfo = new wdModel(config.modelPath);
-    } else {
+    } else if (config.modelPath.toLowerCase().includes("cl")) {
         modelInfo = new clModel(config.modelPath);
+    } else if (config.modelPath.toLowerCase().includes("ca")) {
+        modelInfo = new caModel(config.modelPath);
     }
     const session = await createSession(modelInfo.modelPath);
     const tagSet = await modelInfo.checkTagsFileExists();
