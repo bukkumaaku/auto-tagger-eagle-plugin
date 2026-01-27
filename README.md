@@ -1,135 +1,105 @@
-Auto Tagger Plugin for Eagle
+# Auto Tagger Plugin for Eagle
 
-Eagle Auto Tagger Plugin
+## Eagle Auto Tagger Plugin
 
-Automatically generates descriptive tags for files with thumbnails in your Eagle library.
-No Python or Node.js environment required — download and use instantly.
-Supports GPU acceleration (DirectML / WebGPU) with automatic CPU fallback.
+Automatically generate descriptive tags for files with thumbnails in the Eagle repository. No need to install Python or Node.js environment, just download and use. Supports GPU acceleration (DirectML/WebGPU) and automatic CPU fallback.
 
-✨ Features
+### ✨ Special function
 
-Zero-dependency installation
-No need to install or configure Node.js, Python, or any development environment. Just download, extract, and import into Eagle.
+- Zero dependency installation: No need to configure Node.js, Python or any development environment, just download and unzip it and import it into Eagle.
+- Intelligent recognition: automatically analyze image/video content and generate accurate tags.
+- Hardware acceleration:
+- Prioritize GPU acceleration (supports DirectML / WebGPU, no CUDA required).
+- Automatically switches to CPU mode when there is no graphics card or insufficient video memory.
+- Multi-model support: Compatible with mainstream models such as WDv2, Vitv3, CL-Tagger, etc.
 
-Intelligent content recognition
-Automatically analyzes image/video content and generates accurate, descriptive tags.
+### 📥 Installation guide
 
-Hardware acceleration
+1. Download the plug-in
+Please go to the Releases page to download the latest version of the plug-in format:
 
-Prioritizes GPU acceleration (DirectML / WebGPU, no CUDA required)
+- Windows users: Download auto-tagger-eagle-plugin-win-x64.eagleplugin
+- macOS users: Download auto-tagger-eagle-plugin-mac-arm64.eagleplugin (only supports Apple Silicon M1/M2/M3...)
 
-Automatically falls back to CPU when no GPU is available or VRAM is insufficient
+2. Import Eagle
 
-Multiple model support
-Compatible with WDv2, ViT v3, CL-Tagger, and other mainstream tagging models.
+- Unzip the downloaded .eagleplugin file.
+- Open the Eagle software.
+- Drag the .eagleplugin file into eagle and click install
+> System requirements:
+>
+> - Windows 10/11 x64
+> - macOS 14+ (Apple Silicon)
+> - Eagle App v4.0 and above
 
-📥 Installation Guide
-Download the plugin
+### 🧠 Model configuration
 
-Go to the Releases page and download the latest version:
+This plug-in needs to be used with model files. In order to reduce the size, the plug-in package does not include pre-trained models, please download on demand.
 
-Windows:
-auto-tagger-eagle-plugin-win-x64.eagleplugin
+1. Get the model
+Please visit HuggingFace - SmilingWolf to download the following recommended models (just download the two files model.onnx and selected_tags.csv (except CL-Tagger)):
 
-macOS (Apple Silicon only):
-auto-tagger-eagle-plugin-mac-arm64.eagleplugin
-(Supports M1 / M2 / M3 and later)
+- Recommended: wd-v1-4-moat-tagger-v2 (best overall effect)
+- High precision: wd-vit-tagger-v3
+- Others: CL-Tagger (requires json mapping table)
 
-Import into Eagle
+2. Place the model
 
-Extract the downloaded .eagleplugin file.
+- Place the downloaded file into the models folder in the plugin directory. The recommended structure is as follows:
 
-Open Eagle.
+```
+   auto-tagger-eagle-plugin/
+   └── models/
+   ├── wd-v1-4-moat-tagger-v2/ <-- 文件夹名即为模型名
+   │ ├── model.onnx
+   │ └── selected_tags.csv
+   └── wd-vit-tagger-v3/
+   ├── model.onnx
+   └── selected_tags.csv
+```
 
-Drag the .eagleplugin file into Eagle and click Install.
+Note: Model.onnx and tag_mapping.json are placed under the cL-tagger model folder.
 
-System Requirements
+### 🚀 Instructions for use
 
-Windows 10 / 11 (x64)
+- Select one or more pictures in Eagle.
+- Right-click or the plug-in icon and select "Auto Tagger".
+- Select the model (such as wd-v1-4-moat-tagger-v2) in the pop-up panel.
+- Click Start and wait for the label to be generated.
 
-macOS 14+ (Apple Silicon only)
+⚠️ Notes
+| Model name | Notes |
+|---|---|
+| wd-v1-4-moat-tagger-v2 | ⚠️ Batch Size can only be set to 1, otherwise an error may be reported. |
+| wd-vit-tagger-v3 | The video memory usage is slightly higher, the speed is slightly slower, but the accuracy is higher. |
+| cl_tagger | It is recommended that the confidence threshold be set greater than 0.55, otherwise too many interference tags will be generated. |
 
-Eagle App v4.0 or later
+### 🛠️ Developer Guide (Build from source)
 
-🧠 Model Configuration
+If you want to modify the code or compile the plug-in yourself, please refer to the following steps (ordinary users please skip):
+Environmental preparation
 
-This plugin requires external model files.
-To keep the plugin lightweight, pretrained models are not included and must be downloaded separately.
+-   Node.js 20+
+-   Git
 
-Download models
+#### 1. 克隆仓库
 
-Visit HuggingFace – SmilingWolf and download the following recommended models
-(download model.onnx and selected_tags.csv, except for CL-Tagger):
-
-Recommended (best overall): wd-v1-4-moat-tagger-v2
-
-High accuracy: wd-vit-tagger-v3
-
-Other: CL-Tagger (requires an additional JSON mapping file)
-
-Place model files
-
-Put the downloaded files into the plugin’s models directory.
-Recommended structure:
-
-auto-tagger-eagle-plugin/
-└── models/
-    ├── wd-v1-4-moat-tagger-v2/
-    │   ├── model.onnx
-    │   └── selected_tags.csv
-    └── wd-vit-tagger-v3/
-        ├── model.onnx
-        └── selected_tags.csv
-
-
-Note:
-For CL-Tagger, the model folder should contain:
-
-model.onnx
-
-tag_mapping.json
-
-🚀 How to Use
-
-Select one or more images in Eagle.
-
-Right-click or click the plugin icon and choose “Auto Tagger”.
-
-Select a model (e.g. wd-v1-4-moat-tagger-v2) in the popup panel.
-
-Click Start and wait for tag generation to complete.
-
-⚠️ Notes & Recommendations
-Model Name	Notes
-wd-v1-4-moat-tagger-v2	⚠️ Batch Size must be set to 1, otherwise errors may occur
-wd-vit-tagger-v3	Higher VRAM usage, slower speed, but better accuracy
-cl_tagger	Recommended confidence threshold > 0.55 to avoid excessive noisy tags
-🛠️ Developer Guide (Build from Source)
-
-If you want to modify the code or build the plugin yourself
-(regular users can skip this section)
-
-Requirements
-
-Node.js 20+
-
-Git
-
-1. Clone the repository
+```
 git clone https://github.com/bukkumaaku/auto-tagger-eagle-plugin.git
 cd auto-tagger-eagle-plugin
+```
 
-2. Install dependencies
+#### 2. Install dependencies
+
+```
 npm install
+```
 
-🤝 Contribution & Feedback
+### 🤝 Contribution and Feedback
 
-Found a bug or have a feature request?
-Feel free to submit an Issue. Please include:
+Have a problem or have a new feature suggestion? Welcome to submit Issues.
+When submitting an issue, please provide:
 
-Operating system version
-
-Error log screenshot
-(press F12 in the plugin interface to open the console)
-
-GPU model
+- Operating system version
+- Error log screenshot (press F12 in the plug-in interface to view the console that appears)
+- Graphics card model
