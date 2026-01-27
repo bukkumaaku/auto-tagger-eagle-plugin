@@ -78,7 +78,7 @@ async function setTag(imageItems, tagListBatch) {
             title: "有部分文件处理失败",
             content: () => {
                 return h("div", [
-                    h("div", "Failed files："),
+                    h("div", "失败文件："),
                     error_image.map((fileName) =>
                         h("div", { style: "color: red" }, fileName)
                     ),
@@ -86,7 +86,7 @@ async function setTag(imageItems, tagListBatch) {
             },
         });
     } else {
-        await notification(`All files have been tagged, a total of ${count_tagger} files.`);
+        await notification(`All files have been tagged,a total of ${count_taggger} files.`);
     }
     is_processing = false;
 }
