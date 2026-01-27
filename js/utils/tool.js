@@ -67,7 +67,7 @@ async function setTag(imageItems, tagListBatch) {
     });
     try {
         const aiTagger = require(__dirname + "/js/utils/ai-tagger.js");
-        await notification(`正在开始打标，有${imagePath.length}个文件待处理`);
+        await notification(`Starting the labeling process, ${imagePath.length} files are waiting to be processed.`);
         await aiTagger(imagePath, window.items, setTag, config);
     } catch (e) {
         alert("有部分文件处理失败，请关闭窗口或者调低批次大小后重试");
@@ -78,7 +78,7 @@ async function setTag(imageItems, tagListBatch) {
             title: "有部分文件处理失败",
             content: () => {
                 return h("div", [
-                    h("div", "失败文件："),
+                    h("div", "Failed files："),
                     error_image.map((fileName) =>
                         h("div", { style: "color: red" }, fileName)
                     ),
@@ -86,7 +86,7 @@ async function setTag(imageItems, tagListBatch) {
             },
         });
     } else {
-        await notification(`所有文件已打标完成,共${count_taggger}个文件`);
+        await notification(`All files have been tagged, a total of ${count_tagger} files.`);
     }
     is_processing = false;
 }
