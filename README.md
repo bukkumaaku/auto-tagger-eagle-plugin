@@ -82,7 +82,7 @@ Environmental preparation
 -   Node.js 20+
 -   Git
 
-#### 1. 克隆仓库
+#### 1. Clone repository
 
 ```
 git clone https://github.com/bukkumaaku/auto-tagger-eagle-plugin.git
