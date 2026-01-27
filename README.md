@@ -1,105 +1,135 @@
-# Auto Tagger Plugin for Eagle
+Auto Tagger Plugin for Eagle
 
-## Eagle 自动打标插件
+Eagle Auto Tagger Plugin
 
-为 Eagle 资源库中有缩略图的文件自动生成描述性标签。无需安装 Python 或 Node.js 环境，下载即用。支持 GPU 加速（DirectML/WebGPU）与 CPU 自动回退。
+Automatically generates descriptive tags for files with thumbnails in your Eagle library.
+No Python or Node.js environment required — download and use instantly.
+Supports GPU acceleration (DirectML / WebGPU) with automatic CPU fallback.
 
-### ✨ 功能特性
+✨ Features
 
--   零依赖安装：无需配置 Node.js、Python 或任何开发环境，下载解压即可导入 Eagle。
--   智能识别：自动分析图片/视频内容并生成精准标签。
--   硬件加速：
-    -   优先使用 GPU 加速（支持 DirectML / WebGPU，无需 CUDA）。
-    -   无显卡或显存不足时自动切换至 CPU 模式。
--   多模型支持：兼容 WDv2、Vitv3、CL-Tagger 等主流模型。
+Zero-dependency installation
+No need to install or configure Node.js, Python, or any development environment. Just download, extract, and import into Eagle.
 
-### 📥 安装指南
+Intelligent content recognition
+Automatically analyzes image/video content and generates accurate, descriptive tags.
 
-1. 下载插件
-   请前往 Releases 页面 下载最新版本的插件格式：
+Hardware acceleration
 
--   Windows 用户: 下载 auto-tagger-eagle-plugin-win-x64.eagleplugin
--   macOS 用户: 下载 auto-tagger-eagle-plugin-mac-arm64.eagleplugin (仅支持 Apple Silicon M1/M2/M3...)
+Prioritizes GPU acceleration (DirectML / WebGPU, no CUDA required)
 
-2. 导入 Eagle
+Automatically falls back to CPU when no GPU is available or VRAM is insufficient
 
--   解压下载的 .eagleplugin 文件。
--   打开 Eagle 软件。
--   将 .eagleplugin 文件拖入 eagle 内，并点击 install 即可
-    > 系统要求：
-    >
-    > -   Windows 10/11 x64
-    > -   macOS 14+ (Apple Silicon)
-    > -   Eagle App v4.0 及以上版本
+Multiple model support
+Compatible with WDv2, ViT v3, CL-Tagger, and other mainstream tagging models.
 
-### 🧠 模型配置
+📥 Installation Guide
+Download the plugin
 
-本插件需配合模型文件使用。为了减小体积，插件包内不包含预训练模型，请按需下载。
+Go to the Releases page and download the latest version:
 
-1. 获取模型
-   请访问 HuggingFace - SmilingWolf 下载以下推荐模型（下载 model.onnx 和 selected_tags.csv 两个文件即可(CL-Tagger 除外)）：
+Windows:
+auto-tagger-eagle-plugin-win-x64.eagleplugin
 
--   推荐：wd-v1-4-moat-tagger-v2 (综合效果最好)
--   高精度：wd-vit-tagger-v3
--   其他：CL-Tagger (需配合 json 映射表)
+macOS (Apple Silicon only):
+auto-tagger-eagle-plugin-mac-arm64.eagleplugin
+(Supports M1 / M2 / M3 and later)
 
-2. 放置模型
+Import into Eagle
 
--   将下载的文件放入插件目录下的 models 文件夹中。推荐结构如下：
+Extract the downloaded .eagleplugin file.
 
-```
-   auto-tagger-eagle-plugin/
-   └── models/
-   ├── wd-v1-4-moat-tagger-v2/ <-- 文件夹名即为模型名
-   │ ├── model.onnx
-   │ └── selected_tags.csv
-   └── wd-vit-tagger-v3/
-   ├── model.onnx
-   └── selected_tags.csv
-```
+Open Eagle.
 
-注：cL-tagger 模型文件夹下放置的是 model.onnx 和 tag_mapping.json
+Drag the .eagleplugin file into Eagle and click Install.
 
-### 🚀 使用说明
+System Requirements
 
--   在 Eagle 中选中一张或多张图片。
--   点击右键或插件图标，选择 "Auto Tagger"。
--   在弹出的面板中选择模型（如 wd-v1-4-moat-tagger-v2）。
--   点击开始，等待标签生成完毕。
+Windows 10 / 11 (x64)
 
-⚠️ 注意事项
-| 模型名称 | 注意事项 |
-|---|---|
-| wd-v1-4-moat-tagger-v2 | ⚠️ 批次大小 (Batch Size) 只能设置为 1，否则可能报错。 |
-| wd-vit-tagger-v3 | 显存占用稍高，速度稍慢，但精度更高。 |
-| cl_tagger | 建议置信度阈值设置大于 0.55，否则会产生过多干扰标签。 |
+macOS 14+ (Apple Silicon only)
 
-### 🛠️ 开发者指南 (Build from source)
+Eagle App v4.0 or later
 
-如果你想自行修改代码或编译插件，请参考以下步骤（普通用户请跳过）：
-环境准备
+🧠 Model Configuration
 
--   Node.js 20+
--   Git
+This plugin requires external model files.
+To keep the plugin lightweight, pretrained models are not included and must be downloaded separately.
 
-#### 1. 克隆仓库
+Download models
 
-```
+Visit HuggingFace – SmilingWolf and download the following recommended models
+(download model.onnx and selected_tags.csv, except for CL-Tagger):
+
+Recommended (best overall): wd-v1-4-moat-tagger-v2
+
+High accuracy: wd-vit-tagger-v3
+
+Other: CL-Tagger (requires an additional JSON mapping file)
+
+Place model files
+
+Put the downloaded files into the plugin’s models directory.
+Recommended structure:
+
+auto-tagger-eagle-plugin/
+└── models/
+    ├── wd-v1-4-moat-tagger-v2/
+    │   ├── model.onnx
+    │   └── selected_tags.csv
+    └── wd-vit-tagger-v3/
+        ├── model.onnx
+        └── selected_tags.csv
+
+
+Note:
+For CL-Tagger, the model folder should contain:
+
+model.onnx
+
+tag_mapping.json
+
+🚀 How to Use
+
+Select one or more images in Eagle.
+
+Right-click or click the plugin icon and choose “Auto Tagger”.
+
+Select a model (e.g. wd-v1-4-moat-tagger-v2) in the popup panel.
+
+Click Start and wait for tag generation to complete.
+
+⚠️ Notes & Recommendations
+Model Name	Notes
+wd-v1-4-moat-tagger-v2	⚠️ Batch Size must be set to 1, otherwise errors may occur
+wd-vit-tagger-v3	Higher VRAM usage, slower speed, but better accuracy
+cl_tagger	Recommended confidence threshold > 0.55 to avoid excessive noisy tags
+🛠️ Developer Guide (Build from Source)
+
+If you want to modify the code or build the plugin yourself
+(regular users can skip this section)
+
+Requirements
+
+Node.js 20+
+
+Git
+
+1. Clone the repository
 git clone https://github.com/bukkumaaku/auto-tagger-eagle-plugin.git
 cd auto-tagger-eagle-plugin
-```
 
-#### 2. 安装依赖
-
-```
+2. Install dependencies
 npm install
-```
 
-### 🤝 贡献与反馈
+🤝 Contribution & Feedback
 
-遇到问题或有新功能建议？欢迎提交 Issues。
-提交 Issue 时请提供：
+Found a bug or have a feature request?
+Feel free to submit an Issue. Please include:
 
--   操作系统版本
--   错误日志截图 (在插件界面按 F12 出现的控制台查看)
--   显卡型号
+Operating system version
+
+Error log screenshot
+(press F12 in the plugin interface to open the console)
+
+GPU model
