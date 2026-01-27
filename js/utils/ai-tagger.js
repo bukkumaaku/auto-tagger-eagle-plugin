@@ -227,7 +227,7 @@ function getVideoDuration(videoPath) {
             if (duration) {
                 resolve(duration);
             } else {
-                reject(new Error("无法获取视频时长"));
+                reject(new Error("Unable to retrieve video duration."));
             }
         });
     });
@@ -238,7 +238,7 @@ function takeScreenshots(videoPath, outputFolder, timestamps) {
         const outputFilenames = [];
         const command = ffmpeg(videoPath)
             .on("filenames", function (filenames) {
-                console.log("成功生成截图: " + filenames.join(", "));
+                console.log("Screenshot generated successfully.: " + filenames.join(", "));
                 filenames.forEach((name) =>
                     outputFilenames.push(path.join(outputFolder, name))
                 );
@@ -247,7 +247,7 @@ function takeScreenshots(videoPath, outputFolder, timestamps) {
                 resolve(outputFilenames);
             })
             .on("error", function (err) {
-                console.error("截图过程中发生错误: " + err.message);
+                console.error("An error occurred during the screenshot process.: " + err.message);
                 reject(err);
             })
             .screenshots({
@@ -327,7 +327,7 @@ async function getTag(
             !isRecursion &&
             config.readVideo === "read"
         ) {
-            console.log("正在截取视频: " + imageItemsBatchs[i].filePath);
+            console.log("Capturing video...: " + imageItemsBatchs[i].filePath);
             const inputFile = imageItemsBatchs[i].filePath;
             const ffmpegPaths = await eagle.extraModule.ffmpeg.getPaths();
             const ffmpegBinaryPath = ffmpegPaths.ffmpeg;
@@ -388,7 +388,7 @@ module.exports = async function aiTagger(images, imageItems, setTag, config) {
     let imageItemsBatchs = [];
     let countStep = 0;
     for (let i = 0; i < images.length; i++) {
-        console.log(`正在处理第${i + 1}/${images.length}张图片: ${images[i]}`);
+        console.log(`Processing item number${i + 1}/${images.length}张图片: ${images[i]}`);
         if (config.overwrite !== "nocover" || imageItems[i].tags.length === 0) {
             imageBatchs.push(images[i]);
             imageItemsBatchs.push(imageItems[i]);
