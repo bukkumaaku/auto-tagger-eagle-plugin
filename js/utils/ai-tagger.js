@@ -15,7 +15,7 @@ class wdModel {
             "..",
             "..",
             "models",
-            filePath
+            filePath,
         );
         this.modelPath = path.join(this.modelFolderPath, "model.onnx");
         this.tagsPath = path.join(this.modelFolderPath, "selected_tags.csv");
@@ -54,7 +54,7 @@ class wdModel {
         const rawPixelData = await image.raw().toBuffer();
         const channels = 3;
         const inputData = new Float32Array(
-            this.sizeSetting * this.sizeSetting * channels
+            this.sizeSetting * this.sizeSetting * channels,
         );
         return this.extraPreProcess(inputData, rawPixelData);
     }
@@ -142,11 +142,11 @@ class caModel extends clModel {
         this._shape = [1, 3, this.sizeSetting, this.sizeSetting];
         this.tagsPath = path.join(
             this.modelFolderPath,
-            "camie-tagger-v2-metadata.json"
+            "camie-tagger-v2-metadata.json",
         );
         this.modelPath = path.join(
             this.modelFolderPath,
-            "camie-tagger-v2.onnx"
+            "camie-tagger-v2.onnx",
         );
     }
 
@@ -227,7 +227,7 @@ function getVideoDuration(videoPath) {
             if (duration) {
                 resolve(duration);
             } else {
-                reject(new Error("无法获取视频时长"));
+                reject(new Error(t("tagger.get_video_content_error")));
             }
         });
     });
@@ -238,16 +238,21 @@ function takeScreenshots(videoPath, outputFolder, timestamps) {
         const outputFilenames = [];
         const command = ffmpeg(videoPath)
             .on("filenames", function (filenames) {
-                console.log("成功生成截图: " + filenames.join(", "));
+                console.log(
+                    t("tagger.get_video_screenshot_success") +
+                        filenames.join(", "),
+                );
                 filenames.forEach((name) =>
-                    outputFilenames.push(path.join(outputFolder, name))
+                    outputFilenames.push(path.join(outputFolder, name)),
                 );
             })
             .on("end", function () {
                 resolve(outputFilenames);
             })
             .on("error", function (err) {
-                console.error("截图过程中发生错误: " + err.message);
+                console.error(
+                    t("tagger.get_video_screenshot_error") + err.message,
+                );
                 reject(err);
             })
             .screenshots({
@@ -265,7 +270,7 @@ async function getTag(
     config,
     imageItemsBatchs,
     modelInfo,
-    isRecursion = false
+    isRecursion = false,
 ) {
     const results = await runInference(imagePath, modelInfo);
     let resultsLength = results.length;
@@ -287,7 +292,7 @@ async function getTag(
     }
     if (imagePath.length === 0) return [[]];
     const concatenatedData = new Float32Array(
-        imagePath.length * 3 * modelInfo.sizeSetting * modelInfo.sizeSetting
+        imagePath.length * 3 * modelInfo.sizeSetting * modelInfo.sizeSetting,
     );
     let offset = 0;
     for (const tensor of results) {
@@ -327,7 +332,9 @@ async function getTag(
             !isRecursion &&
             config.readVideo === "read"
         ) {
-            console.log("正在截取视频: " + imageItemsBatchs[i].filePath);
+            console.log(
+                t("tagger.capture_video") + imageItemsBatchs[i].filePath,
+            );
             const inputFile = imageItemsBatchs[i].filePath;
             const ffmpegPaths = await eagle.extraModule.ffmpeg.getPaths();
             const ffmpegBinaryPath = ffmpegPaths.ffmpeg;
@@ -339,9 +346,9 @@ async function getTag(
             const timestamps = percentages.map((percent) => {
                 return (duration * percent) / 100;
             });
-            for (let i in timestamps) {
+            for (const timestamp of timestamps) {
                 const savedFiles = await takeScreenshots(inputFile, __dirname, [
-                    i,
+                    timestamp,
                 ]);
                 const tag1 = await getTag(
                     savedFiles,
@@ -350,7 +357,7 @@ async function getTag(
                     config,
                     [imageItemsBatchs[i]],
                     modelInfo,
-                    true
+                    true,
                 );
                 tag1[0].forEach((element) => {
                     if (!tag.includes(element)) {
@@ -388,7 +395,9 @@ module.exports = async function aiTagger(images, imageItems, setTag, config) {
     let imageItemsBatchs = [];
     let countStep = 0;
     for (let i = 0; i < images.length; i++) {
-        console.log(`正在处理第${i + 1}/${images.length}张图片: ${images[i]}`);
+        console.log(
+            `${t("tagger.processing_prefix")}${i + 1}/${images.length}${t("tagger.processing_suffix")}${images[i]}`,
+        );
         if (config.overwrite !== "nocover" || imageItems[i].tags.length === 0) {
             imageBatchs.push(images[i]);
             imageItemsBatchs.push(imageItems[i]);
@@ -404,7 +413,7 @@ module.exports = async function aiTagger(images, imageItems, setTag, config) {
                 tagSet,
                 config,
                 imageItemsBatchs,
-                modelInfo
+                modelInfo,
             );
             await setTag(imageItemsBatchs, tag);
             countStep = 0;
@@ -419,7 +428,7 @@ module.exports = async function aiTagger(images, imageItems, setTag, config) {
             tagSet,
             config,
             imageItemsBatchs,
-            modelInfo
+            modelInfo,
         );
         await setTag(imageItemsBatchs, tag);
         countStep = 0;
