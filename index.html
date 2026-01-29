@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
     <head>
         <meta charset="UTF-8" />
@@ -6,6 +6,9 @@
             name="viewport"
             content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
         />
+        <script>
+            window.t = (key) => i18next.t(key);
+        </script>
         <script src="js/lib/vue.global.js"></script>
         <script src="js/lib/naiveui.js"></script>
         <script src="js/utils/tagset.js"></script>
@@ -58,9 +61,8 @@
                             line-height: 30px;
                             margin-left: 10px;
                         "
-                        >自动标签</n-thing
+                        >{{t("index.title")}}</n-thing
                     >
-                    <!-- 最小化和关闭按钮 -->
                     <n-thing>
                         <n-button
                             @click="handleMinimize"
@@ -100,7 +102,7 @@
                         margin-top: 30px;
                     "
                 >
-                    <n-form-item label="进度" path="modelName">
+                    <n-form-item :label="t('index.progress')" path="modelName">
                         <n-thing>{{ allItem }}/{{ completeItem }}</n-thing>
                         &nbsp;&nbsp;
                         <n-progress
@@ -109,8 +111,10 @@
                             indicator-placement="inside"
                         />
                     </n-form-item>
-                    <!-- 模型位置 -->
-                    <n-form-item label="模型位置" path="modelPath">
+                    <n-form-item
+                        :label="t('index.model_location')"
+                        path="modelPath"
+                    >
                         <n-select
                             v-model:value="formData.modelPath"
                             :options="options"
@@ -121,11 +125,10 @@
                             @click="showModal = true"
                             style="margin: auto; margin-right: 0px"
                         >
-                            模型下载窗口
+                            {{ t('index.model_download_window') }}
                         </n-button>
                     </n-form-item>
-                    <!-- 阈值 -->
-                    <n-form-item label="阈值" path="threshold"
+                    <n-form-item :label="t('index.threthold')" path="threshold"
                         ><n-tooltip trigger="hover">
                             <template #trigger>
                                 <div
@@ -133,9 +136,7 @@
                                     class="questionMark"
                                 ></div>
                             </template>
-                            阈值越高，标签越少，但是标签准确率高
-                            <br />
-                            阈值越低，标签越多，但是标签准确率低
+                            <div v-html="t('index.threshold_desc')"></div>
                         </n-tooltip>
                         <n-input-number
                             v-model:value="formData.threshold"
@@ -144,8 +145,7 @@
                             :step="0.01"
                         />
                     </n-form-item>
-                    <!-- 步数 -->
-                    <n-form-item label="批次大小" path="steps">
+                    <n-form-item :label="t('index.batch_size')" path="steps">
                         <n-tooltip trigger="hover">
                             <template #trigger>
                                 <div
@@ -153,7 +153,7 @@
                                     class="questionMark"
                                 ></div>
                             </template>
-                            每批次处理图片的数量，建议不要太大
+                            <div v-html="t('index.batch_size_desc')"></div>
                         </n-tooltip>
                         <n-input-number
                             v-model:value="formData.steps"
@@ -161,8 +161,10 @@
                             :max="40"
                         />
                     </n-form-item>
-                    <!-- 过滤标签 -->
-                    <n-form-item label="过滤标签" path="filterTags">
+                    <n-form-item
+                        :label="t('index.filter_tags')"
+                        path="filterTags"
+                    >
                         <n-tooltip trigger="hover">
                             <template #trigger>
                                 <div
@@ -170,7 +172,7 @@
                                     class="questionMark"
                                 ></div>
                             </template>
-                            被过滤的标签将不会写入文件的标签组中
+                            <div v-html="t('index.filter_tags_desc')"></div>
                         </n-tooltip>
                         <n-select
                             filterable
@@ -179,11 +181,13 @@
                             :show="false"
                             :show-arrow="false"
                             v-model:value="formData.filterTags"
-                            placeholder="输入过滤的标签（英语），回车确认"
+                            :placeholder="t('index.filter_tags_palceholder')"
                         />
                     </n-form-item>
-                    <!-- 是否覆写 -->
-                    <n-form-item label="是否覆写" path="overwrite">
+                    <n-form-item
+                        :label="t('index.is_overwrite')"
+                        path="overwrite"
+                    >
                         <n-tooltip trigger="hover">
                             <template #trigger>
                                 <div
@@ -191,23 +195,29 @@
                                     class="questionMark"
                                 ></div>
                             </template>
-                            不覆写：直接跳过有标签文件（若大量文件已有标签，速度最快）<br />
-                            覆写：若是有标签则进行覆写（时间消耗较高）<br />
-                            合并：若是有标签则进行合并（时间消耗最高）
+                            <div v-html="t('index.is_overwrite_desc')"></div>
                         </n-tooltip>
                         <n-radio-group
                             v-model:value="formData.overwrite"
                             name="overwrite"
                         >
                             <n-space>
-                                <n-radio value="nocover">不覆写</n-radio>
-                                <n-radio value="cover">覆写</n-radio>
-                                <n-radio value="merge">合并</n-radio>
+                                <n-radio value="nocover"
+                                    >{{ t('index.no_cover') }}</n-radio
+                                >
+                                <n-radio value="cover"
+                                    >{{ t('index.cover') }}</n-radio
+                                >
+                                <n-radio value="merge"
+                                    >{{ t('index.merge') }}</n-radio
+                                >
                             </n-space>
                         </n-radio-group>
                     </n-form-item>
-                    <!-- 是否识别视频 -->
-                    <n-form-item label="视频标签" path="readVideo">
+                    <n-form-item
+                        :label="t('index.read_video')"
+                        path="readVideo"
+                    >
                         <n-tooltip trigger="hover">
                             <template #trigger>
                                 <div
@@ -215,35 +225,45 @@
                                     class="questionMark"
                                 ></div>
                             </template>
-                            将读取视频内容，并对1%、20%、40%、60%、80%、99%位置的图像进行标签识别<br />
-                            对视频文件进行标签速度将大幅度降低<br />
-                            需要提前安装插件中心的ffmpeg
+                            <div v-html="t('index.read_video_desc')"></div>
                         </n-tooltip>
                         <n-radio-group
                             v-model:value="formData.readVideo"
                             name="readVideo"
                         >
                             <n-space>
-                                <n-radio value="noread">不读取视频内容</n-radio>
-                                <n-radio value="read">读取并标签</n-radio>
+                                <n-radio value="noread"
+                                    >{{ t('index.no_read_video') }}</n-radio
+                                >
+                                <n-radio value="read"
+                                    >{{ t('index.read_video_content')
+                                    }}</n-radio
+                                >
                             </n-space>
                         </n-radio-group>
                     </n-form-item>
-                    <!-- 标签语言选择 -->
-                    <n-form-item label="标签语言" path="language">
+                    <n-form-item
+                        :label="t('index.lable_language')"
+                        path="language"
+                    >
                         <n-radio-group
                             v-model:value="formData.language"
                             name="language"
                         >
                             <n-space>
-                                <n-radio value="zh">中文</n-radio>
-                                <n-radio value="en">英文</n-radio>
-                                <n-radio value="mix">中文+英文</n-radio>
+                                <n-radio value="zh"
+                                    >{{ t('index.chinese') }}</n-radio
+                                >
+                                <n-radio value="en"
+                                    >{{ t('index.english') }}</n-radio
+                                >
+                                <n-radio value="mix"
+                                    >{{ t('index.language_mix') }}</n-radio
+                                >
                             </n-space>
                         </n-radio-group>
                     </n-form-item>
-                    <!-- 分隔符 -->
-                    <n-form-item label="分隔符" path="splitter">
+                    <n-form-item :label="t('index.splitter')" path="splitter">
                         <n-tooltip trigger="hover">
                             <template #trigger>
                                 <div
@@ -251,16 +271,18 @@
                                     class="questionMark"
                                 ></div>
                             </template>
-                            中文和英文标签共存才需要开启分隔符
+                            <div v-html="t('index.splitter_desc')"></div>
                         </n-tooltip>
                         <n-input
                             v-model:value="formData.splitter"
-                            :placeholder="formData.language === 'mix' ? '请输入分隔符' : '中文和英文标签共存才需要开启分隔符'"
+                            :placeholder="formData.language === 'mix' ? t('index.splitter_palceholder_no_mix') : t('index.splitter_palceholder_mix')"
                             :disabled="formData.language !== 'mix'"
                         />
                     </n-form-item>
-                    <!-- 启动自动打标 -->
-                    <n-form-item label="启动后打标" path="autotagger">
+                    <n-form-item
+                        :label="t('index.auto_tagging')"
+                        path="autotagger"
+                    >
                         <n-tooltip trigger="hover">
                             <template #trigger>
                                 <div
@@ -268,12 +290,10 @@
                                     class="questionMark"
                                 ></div>
                             </template>
-                            打开软件后自动对未打标图片打标，打标参数套用上一次打标参数<br />
-                            标签覆写使用不覆写
+                            <div v-html="t('index.auto_tagging_desc')"></div>
                         </n-tooltip>
                         <n-switch v-model:value="formData.autotagger" />
                     </n-form-item>
-                    <!-- 操作按钮 -->
                     <div
                         style="
                             display: flex;
@@ -282,15 +302,17 @@
                         "
                     >
                         <n-button type="primary" @click="handleSubmit(false)"
-                            >确定</n-button
+                            >{{ t('index.confirm') }}</n-button
                         >
-                        <n-button @click="handleReset">恢复默认</n-button>
+                        <n-button @click="handleReset"
+                            >{{ t('index.reset') }}</n-button
+                        >
                     </div>
                 </n-form>
                 <n-modal
                     v-model:show="showModal"
                     preset="card"
-                    title="下载模型资源"
+                    :title="t('model_download_window.title')"
                     :mask-closable="!isDownloading"
                     :close-on-esc="!isDownloading"
                     :closable="!isDownloading"
@@ -301,27 +323,39 @@
                         <n-card embedded :bordered="false" size="small">
                             <n-space vertical>
                                 <div class="setting-row">
-                                    <span class="label">选择模型：</span>
+                                    <span class="label"
+                                        >{{
+                                        t('model_download_window.select_model')
+                                        }}：</span
+                                    >
                                     <n-select
                                         v-model:value="selectedModel"
                                         :options="modelOptions"
                                         :disabled="isDownloading"
-                                        placeholder="请选择要使用的模型"
+                                        :placeholder="t('model_download_window.select_model_placeholder')"
                                         style="width: 300px"
                                     />
                                 </div>
 
                                 <div class="setting-row">
-                                    <span class="label">下载源：</span>
+                                    <span class="label"
+                                        >{{
+                                        t('model_download_window.download_source')
+                                        }}：</span
+                                    >
                                     <n-radio-group
                                         v-model:value="downloadSource"
                                         :disabled="isDownloading"
                                     >
                                         <n-radio-button value="direct">
-                                            HuggingFace 直连
+                                            {{
+                                            t('model_download_window.huggingface_direct')
+                                            }}
                                         </n-radio-button>
                                         <n-radio-button value="mirror">
-                                            国内镜像 (HF-Mirror)
+                                            {{
+                                            t('model_download_window.huggingface_mirror')
+                                            }}
                                         </n-radio-button>
                                     </n-radio-group>
                                 </div>
@@ -338,7 +372,7 @@
                                 @click="startDownload"
                                 :disabled="!selectedModel"
                             >
-                                开始下载
+                                {{ t('model_download_window.start_download') }}
                             </n-button>
                         </div>
 
@@ -351,7 +385,8 @@
                             >
                                 <template #header-extra>
                                     <n-tag type="info" size="small" round>
-                                        速度: {{ currentSpeed }}
+                                        {{ t('model_download_window.speed') }}:
+                                        {{ currentSpeed }}
                                     </n-tag>
                                 </template>
 
@@ -390,8 +425,10 @@
                                     />
                                     <span style="margin-left: 8px">
                                         {{ progressModel < 100 ?
-                                        '正在下载资源，请勿关闭窗口...' :
-                                        '下载完成！正在校验文件...' }}
+                                        t('model_download_window.downloading_notice')
+                                        :
+                                        t('model_download_window.download_success')
+                                        }}
                                     </span>
                                 </div>
                             </n-card>
@@ -418,14 +455,21 @@
                     setup() {
                         const theme = naive.darkTheme;
                         const formData = ref(config);
+                        const t = (key) => i18next.t(key);
                         // 提交处理
                         const handleSubmit = async (isAll = false) => {
                             if (formData.value.modelPath === "") {
-                                notification("请选择模型路径");
+                                notification(
+                                    t(
+                                        "model_download_window.select_model_location_notice",
+                                    ),
+                                );
                                 return;
                             }
                             if (is_processing) {
-                                notification("仍有任务正在进行中，请等待");
+                                notification(
+                                    t("model_download_window.process_checking"),
+                                );
                                 return;
                             }
                             is_processing = true;
@@ -450,7 +494,7 @@
                         const allItem = ref(0);
                         const completeItem = ref(0);
                         const questionMark = ref(
-                            `<img src="./images/img.icons8.png" class="questionMark">`
+                            `<img src="./images/img.icons8.png" class="questionMark">`,
                         );
                         const showModal = ref(false);
                         const isDownloading = ref(false);
@@ -519,21 +563,22 @@
                                 selectedModel.value,
                                 downloadSource.value,
                                 modelType,
-                                onProgress
+                                onProgress,
                             );
                             await finishDownload();
                         };
                         const finishDownload = async () => {
                             isDownloading.value = false;
                             alert(
-                                "模型下载完成，软件将刷新以应用新模型",
-                                "下载完成",
+                                t("model_download_window.all_done"),
+                                t("model_download_window.all_done_notice"),
                                 {
                                     type: "success",
-                                }
+                                },
                             );
                             window.location.reload();
                         };
+
                         window.options = options;
                         window.formData = formData;
                         window.allItem = allItem;
@@ -561,6 +606,7 @@
                             handleCloseModal,
                             startDownload,
                             selectedModel,
+                            t,
                         };
                     },
                 })
@@ -569,7 +615,6 @@
                 await wait(1000);
                 await autotaggerFun(config);
             }
-            main();
         </script>
     </body>
 </html>
