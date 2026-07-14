@@ -1,107 +1,201 @@
-# Auto Tagger Plugin for Eagle
+# Eagle Auto Tagger
 
 English | [简体中文](./README.md)
 
-## Eagle Auto Tagger Plugin
+Eagle Auto Tagger is an Eagle plugin with a Rust backend and Vue interface. It provides image tagging, video tagging, vision-language model processing, and semantic image search.
 
-Automatically generate descriptive tags for files with thumbnails in the Eagle repository. No need to install Python or Node.js environment, just download and use. Supports GPU acceleration (DirectML/WebGPU) and automatic CPU fallback.
+Current version: `2.0.0`
 
-### ✨ Special function
+## Features
 
-- Zero dependency installation: No need to configure Node.js, Python or any development environment, just download and unzip it and import it into Eagle.
-- Intelligent recognition: automatically analyze image/video content and generate accurate tags.
-- Hardware acceleration:
-- Prioritize GPU acceleration (supports DirectML / WebGPU, no CUDA required).
-- Automatically switches to CPU mode when there is no graphics card or insufficient video memory.
-- Multi-model support: Compatible with mainstream models such as WDv2, Vitv3, CL-Tagger, etc.
+### WD image tagging
 
-### 📥 Installation guide
+- Supports PNG, JPG, JPEG, WEBP, and BMP images. GIF files are skipped.
+- Supports batch image tagging.
+- Supports Chinese, English, or mixed labels with a configurable separator.
+- Supports skip, overwrite, and merge modes for existing tags.
+- Configurable confidence threshold and batch size.
+- If an individual image cannot be read, it is skipped and reported in the task result.
+- Videos can either skip content reading or use ffmpeg to extract frames at 1%, 20%, 40%, 60%, 80%, and 99% of the video duration before tagging.
+- Supports WD, CL-Tagger, and Camie model formats. The backend scans the actual model files before showing a model as available.
 
-1. Download the plug-in
-   Please go to the Releases page to download the latest version of the plug-in format:
+### LLM image understanding
 
-- Windows users: Download auto-tagger-eagle-plugin-win-x64.eagleplugin
-- macOS users: Download auto-tagger-eagle-plugin-mac-arm64.eagleplugin (only supports Apple Silicon M1/M2/M3...)
+- Uses a local llamafile and GGUF vision-language model to process one image at a time.
+- Can generate tags or write an annotation to Eagle.
+- Tagging and annotation prompts can be edited in the interface and are saved separately.
+- Provides controls to restore the default prompts.
+- Supports skip, overwrite, and merge modes for existing tags or annotations.
+- The current model list includes Qwen3.5-9B and Qwen3-VL models. Each model requires both the GGUF main model and its mmproj file.
 
-2. Import Eagle
+### Semantic image search
 
-- Downloaded .eagleplugin file.
-- Open the Eagle software.
-- Drag the .eagleplugin file into eagle and click install
-    > System requirements:
-    >
-    > - Windows 10/11 x64
-    > - macOS 14+ (Apple Silicon)
-    > - Eagle App v4.0 and above
+- Builds a vector index for Eagle images and skips images that are already indexed.
+- Supports pause, resume, configurable batch size, and index progress reporting.
+- Supports text-to-image and image-to-image search.
+- Sorts results by similarity and displays them in a lazy-loaded masonry layout.
+- Click a result to preview it and double-click to open it in Eagle.
+- Supports a local Jina CLIP v2 model.
+- Supports OpenAI Compatible and native Gemini REST remote embedding services.
+- Different models, protocols, and vector dimensions use separate SQLite vector tables so incompatible vector spaces are never mixed.
+- Provides index health checks, stale-item cleanup, and a list of failed items.
 
-### 🧠 Model configuration
+### Tasks and configuration
 
-This plug-in needs to be used with model files. In order to reduce the size, the plug-in package does not include pre-trained models, please download on demand or download from the plugin interface.
+- A unified task center shows tagging, indexing, search, and download tasks.
+- Model downloads report progress and surface errors.
+- Configuration is read and written by the Rust backend. The default file is `.eagle-auto-tagger/config.json5` under the current user's home directory.
+- Newly added configuration keys are written to JSON5 with their default values.
+- Remote embedding API keys are protected by the operating system credential store and are not written to JSON5 in plain text.
 
-1. Get the model
-   Please visit [HuggingFace - SmilingWolf](https://huggingface.co/SmilingWolf) to download the following recommended models (just download the two files model.onnx and selected_tags.csv (except CL-Tagger)):
+## Supported platforms
 
-- Recommended: wd-v1-4-moat-tagger-v2 (best overall effect)
-- High precision: wd-vit-tagger-v3
-- Others: CL-Tagger (requires json mapping table)
+- Windows 10/11 x64
+- macOS ARM64 (Apple Silicon)
+- macOS x64 is not supported.
 
-2. Place the model
+WD and local embedding inference are handled by Rust: Windows tries DirectML first, macOS tries CoreML first, and CPU is used when the accelerated provider is unavailable.
 
-- Place the downloaded file into the models folder in the plugin directory. The recommended structure is as follows:
+## Installation
 
+Download the `.eagleplugin` file for your platform from GitHub Releases. The 2.0.0 files are:
+
+- Windows x64: `auto-tagger-eagle-plugin-v2.0.0-win-x64.eagleplugin`
+- macOS ARM64: `auto-tagger-eagle-plugin-v2.0.0-mac-arm64.eagleplugin`
+
+Open Eagle, drag the `.eagleplugin` file into the application, and confirm the installation.
+
+Large model files are not included in the plugin package. After installation, open Settings, select a model root, and download the required models from the plugin or place them manually in the expected directories.
+
+## Model directories
+
+The model root uses separate subdirectories for each resource type:
+
+```text
+model-root/
+├── wd/
+│   └── wd-eva02-large-tagger-v3/
+│       ├── model.onnx
+│       └── selected_tags.csv
+├── llm/
+│   └── Qwen3.5-9B-Q4_K_M/
+│       ├── Qwen3.5-9B-Q4_K_M.gguf
+│       └── mmproj-F16.gguf
+├── embedding/
+│   └── jina-clip-v2-q8/
+│       ├── onnx/model_quantized.onnx
+│       ├── tokenizer.json
+│       └── other model configuration files
+└── llamafile/
+    └── llamafile-0.10.3.exe
 ```
-   auto-tagger-eagle-plugin/
-   └── models/
-   ├── wd-v1-4-moat-tagger-v2/ <-- The folder name is the model name
-   │ ├── model.onnx
-   │ └── selected_tags.csv
-   └── wd-vit-tagger-v3/
-   ├── model.onnx
-   └── selected_tags.csv
-```
 
-Note: Model.onnx and tag_mapping.json are placed under the cL-tagger model folder.
+### WD models
 
-### 🚀 Instructions for use
+The built-in download list currently includes:
 
-- Select one or more pictures in Eagle.
-- Right-click or the plug-in icon and select "Auto Tagger".
-- Select the model (such as wd-v1-4-moat-tagger-v2) in the pop-up panel.
-- Click Start and wait for the label to be generated.
+- `wd-eva02-large-tagger-v3`
+- `wd-vit-tagger-v3`
+- `wd-vit-large-tagger-v3`
+- `wd-v1-4-moat-tagger-v2`
+- `cl_tagger`
+- `camie-tagger-v2`
 
-⚠️ Notes
-| Model name | Notes |
-|---|---|
-| wd-v1-4-moat-tagger-v2 | ⚠️ Batch Size can only be set to 1, otherwise an error may be reported. |
-| wd-vit-tagger-v3 | The video memory usage is slightly higher, the speed is slightly slower, but the accuracy is higher. |
-| cl_tagger | It is recommended that the confidence threshold be set greater than 0.55, otherwise too many interference tags will be generated. |
+WD models must be placed under `model-root/wd/model-name/` with the model files and tag metadata required by that format. The backend decides whether a model is complete; incomplete models are not shown as available.
 
-### 🛠️ Developer Guide (Build from source)
+### LLM models
 
-If you want to modify the code or compile the plug-in yourself, please refer to the following steps (ordinary users please skip):
-Environmental preparation
+The built-in download list currently includes:
 
-- Node.js 20+
+- `Qwen3.5-9B-Q4_K_M`
+- `Qwen3VL-8B-Instruct-Q4_K_M`
+
+Each model belongs under `model-root/llm/model-name/` and requires a GGUF main model plus its corresponding `mmproj` file. The llamafile runner belongs under `model-root/llamafile/` and can be downloaded from Settings.
+
+### Embedding models
+
+Local embedding models belong under `model-root/embedding/model-name/`. The current built-in local model is `jina-clip-v2-q8`.
+
+For remote embeddings, configure:
+
+- A remote base URL. Enter only the service base URL; the plugin completes the API path.
+- An API key, protected by the operating system credential store.
+- The exact remote model name.
+- The output dimension for the native Gemini REST protocol, from 128 to 3072.
+
+Vectors from different models, protocols, or dimensions cannot be compared. The plugin keeps them in separate indexes.
+
+## Usage
+
+1. Select a model root in Settings.
+2. Download models from the relevant page or place them in the directory structure above.
+3. In WD Tagger, select images, a model, label language, threshold, and overwrite mode, then start tagging.
+4. In LLM Image Understanding, select a model and operation, review the prompt, and process the image.
+5. In Semantic Search, select an embedding model, build an image index, and then search by text or image.
+6. Use the task center to monitor active tasks, progress, and failures.
+
+Reading video content requires ffmpeg provided by the Eagle plugin center. When video content reading is disabled, the plugin does not extract frames from videos.
+
+## Build from source
+
+### Requirements
+
 - Git
+- Bun `1.3.14` or a compatible version
+- Rust `1.94.0`
+- Windows x64 builds require the Windows x64 Rust toolchain.
+- macOS ARM64 builds require the Apple toolchain on a macOS runner or Apple Silicon environment.
 
-#### 1. Clone repository
+### Install and run
 
-```
+```powershell
 git clone https://github.com/bukkumaaku/auto-tagger-eagle-plugin.git
 cd auto-tagger-eagle-plugin
+bun install
+bun run dev
 ```
 
-#### 2. Install dependencies
+### Build the plugin
 
+```powershell
+bun run build
 ```
-npm install
+
+The build compiles the Rust worker, runs Vue type checking, creates the Vite dist directory, and verifies the worker, runtime files, manifest, and absence of the legacy JavaScript runtime.
+
+Rust tests and Clippy:
+
+```powershell
+cargo test --manifest-path backend/Cargo.toml --workspace
+cargo clippy --manifest-path backend/Cargo.toml --workspace --all-targets -- -D warnings
 ```
 
-### 🤝 Contribution and Feedback
+GitHub Actions builds Windows x64 and macOS ARM64 when `main` is pushed. Pushing a version-matching `v2.0.0` tag also creates a Release.
 
-Have a problem or have a new feature suggestion? Welcome to submit Issues.
-When submitting an issue, please provide:
+## Project structure
 
-- Operating system version
-- Error log screenshot (press F12 in the plug-in interface to view the console that appears)
-- Graphics card model
+```text
+backend/
+├── crates/protocol       JSON Lines stdin/stdout protocol definitions
+├── crates/ai-worker      Rust worker and request dispatch
+├── crates/wd-tagger      WD/CL/Camie ONNX tagging
+├── crates/llamafile      llamafile lifecycle and image requests
+├── crates/*-embedding    Local and remote embeddings
+└── crates/vector-store   SQLite vec storage and search
+src/
+├── components/           Vue feature interfaces
+├── services/             Worker client and task center
+└── api/                  Eagle API and frontend orchestration
+```
+
+The frontend handles interface interaction and light orchestration. The Rust worker handles inference, file I/O, downloads, configuration, indexing, and concurrency. The frontend and backend communicate through JSON Lines over stdin/stdout.
+
+## Issues and feedback
+
+When opening an issue, include:
+
+- Operating system and Eagle version.
+- The feature, model name, and model directory structure involved.
+- The error message or worker log from the plugin.
+- GPU model and whether DirectML, CoreML, or CPU was used.
+- The smallest set of steps that reproduces the problem.
