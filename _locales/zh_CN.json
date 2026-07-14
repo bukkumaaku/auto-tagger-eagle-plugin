@@ -33,6 +33,15 @@
         "confirm": "确认",
         "reset": "恢复默认"
     },
+    "update": {
+        "title": "发现新版本",
+        "current_version": "当前版本：",
+        "latest_version": "；最新版本：",
+        "open_prompt": "。是否打开 Release 下载页面？",
+        "open_release": "打开下载页面",
+        "later": "稍后",
+        "open_failed": "无法打开 Release 页面"
+    },
     "model_download_window": {
         "title": "下载模型资源",
         "select_model": "选择模型",

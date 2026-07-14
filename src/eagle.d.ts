@@ -11,6 +11,9 @@ declare global {
         os: any;
         extraModule: any;
         dialog: any;
+        shell?: {
+            openExternal: (url: string) => Promise<void> | void;
+        };
     };
 
     // 👇 新增：告诉 TS 全局有 __dirname 这个变量

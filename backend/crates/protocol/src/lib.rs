@@ -21,6 +21,9 @@ pub struct AaaRequest {
     pub value: String,
 }
 
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct CheckForUpdateRequest {}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadFileRequest {
@@ -298,6 +301,7 @@ pub struct LlamafileUnloadRequest {
 pub enum Command {
     Echo(EchoRequest),
     Aaa(AaaRequest),
+    CheckForUpdate(CheckForUpdateRequest),
     DownloadFile(DownloadFileRequest),
     ReadConfig(ReadConfigRequest),
     WriteConfig(WriteConfigRequest),
@@ -343,6 +347,15 @@ pub struct EchoResult {
 #[serde(rename_all = "camelCase")]
 pub struct AaaResult {
     pub value: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckForUpdateResult {
+    pub current_version: String,
+    pub latest_version: String,
+    pub update_available: bool,
+    pub release_url: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -646,6 +659,7 @@ impl ErrorPayload {
 pub enum ResultPayload {
     Echo(EchoResult),
     Aaa(AaaResult),
+    CheckForUpdate(CheckForUpdateResult),
     DownloadFile(DownloadFileResult),
     ReadConfig(ReadConfigResult),
     WriteConfig(WriteConfigResult),
@@ -772,6 +786,20 @@ mod tests {
             Command::Aaa(payload) => assert_eq!(payload.value, "aaa"),
             _ => panic!("expected aaa command"),
         }
+    }
+
+    #[test]
+    fn parses_check_for_update_request() {
+        let json = r#"{
+            "protocolVersion": 1,
+            "requestId": "update-check",
+            "type": "check_for_update",
+            "payload": {}
+        }"#;
+
+        let request: Request = serde_json::from_str(json).unwrap();
+
+        assert!(matches!(request.command, Command::CheckForUpdate(_)));
     }
 
     #[test]

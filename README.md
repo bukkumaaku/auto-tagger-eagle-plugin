@@ -4,7 +4,7 @@
 
 Eagle Auto Tagger 是一个使用 Rust 后端和 Vue 界面的 Eagle 插件，用于图片打标、视频打标、视觉语言模型处理，以及图片语义搜索。
 
-当前版本：`2.0.0`
+当前版本：`2.0.1`
 
 ## 功能
 
@@ -44,6 +44,7 @@ Eagle Auto Tagger 是一个使用 Rust 后端和 Vue 界面的 Eagle 插件，�
 
 - 统一任务中心显示打标、索引、搜索和下载任务。
 - 模型下载支持实时进度和错误提示。
+- 插件启动时会检查 GitHub Releases；发现新版本后提示用户，并可直接打开 Release 下载页面。
 - 配置由 Rust 后端读写，默认文件位于用户目录下的 `.eagle-auto-tagger/config.json5`。
 - 新增配置键会自动使用默认值写入 JSON5 文件。
 - 远程 embedding 的 API key 使用操作系统凭据存储保护，不以明文写入 JSON5。
@@ -58,10 +59,10 @@ WD 和本地 embedding 模型的执行后端由 Rust 负责：Windows 优先使�
 
 ## 安装
 
-从 GitHub Releases 下载对应平台的 `.eagleplugin` 文件。2.0.0 版本的文件名为：
+从 GitHub Releases 下载对应平台的 `.eagleplugin` 文件。2.0.1 版本的文件名为：
 
-- Windows x64：`auto-tagger-eagle-plugin-v2.0.0-win-x64.eagleplugin`
-- macOS ARM64：`auto-tagger-eagle-plugin-v2.0.0-mac-arm64.eagleplugin`
+- Windows x64：`auto-tagger-eagle-plugin-v2.0.1-win-x64.eagleplugin`
+- macOS ARM64：`auto-tagger-eagle-plugin-v2.0.1-mac-arm64.eagleplugin`
 
 下载后打开 Eagle，将 `.eagleplugin` 文件拖入 Eagle 并确认安装。
 
@@ -170,7 +171,7 @@ cargo test --manifest-path backend/Cargo.toml --workspace
 cargo clippy --manifest-path backend/Cargo.toml --workspace --all-targets -- -D warnings
 ```
 
-GitHub Actions 在推送到 `main` 时构建 Windows x64 和 macOS ARM64；推送与版本一致的 `v2.0.0` 标签时会额外创建 Release。
+GitHub Actions 在推送到 `main` 时构建 Windows x64 和 macOS ARM64；推送与版本一致的 `v2.0.1` 标签时会额外创建 Release。
 
 ## 项目结构
 

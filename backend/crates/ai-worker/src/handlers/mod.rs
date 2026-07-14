@@ -1,4 +1,5 @@
 pub mod aaa;
+pub mod check_update;
 pub mod config;
 pub mod download_file;
 pub mod echo;
@@ -77,6 +78,9 @@ impl CommandHandler for BuiltinHandlers {
     ) -> HandlerResult<ResultPayload> {
         match command {
             Command::Aaa(request) => aaa::handle(request).map(ResultPayload::Aaa),
+            Command::CheckForUpdate(request) => {
+                check_update::handle(request).map(ResultPayload::CheckForUpdate)
+            }
             Command::DownloadFile(request) => {
                 download_file::handle(request, events).map(ResultPayload::DownloadFile)
             }

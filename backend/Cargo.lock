@@ -33,7 +33,7 @@ dependencies = [
 
 [[package]]
 name = "ai-worker"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "base64 0.22.1",
  "clip-embedding",
@@ -44,6 +44,8 @@ dependencies = [
  "llamafile",
  "openai-embedding",
  "protocol",
+ "reqwest",
+ "serde",
  "serde_json",
  "thiserror",
  "vector-store",
@@ -185,7 +187,7 @@ dependencies = [
 
 [[package]]
 name = "clip-embedding"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "image",
  "ndarray",
@@ -212,7 +214,7 @@ dependencies = [
 
 [[package]]
 name = "config-store"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "base64 0.22.1",
  "json5",
@@ -445,7 +447,7 @@ dependencies = [
 
 [[package]]
 name = "downloader"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "futures-util",
  "reqwest",
@@ -638,7 +640,7 @@ dependencies = [
 
 [[package]]
 name = "gemini-embedding"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "base64 0.22.1",
  "image",
@@ -1036,7 +1038,7 @@ checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
 name = "llamafile"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "base64 0.22.1",
  "image",
@@ -1226,7 +1228,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "openai-embedding"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "reqwest",
  "serde",
@@ -1434,7 +1436,7 @@ dependencies = [
 
 [[package]]
 name = "protocol"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "config-store",
  "serde",
@@ -2353,7 +2355,7 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "vector-store"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "rusqlite",
  "sqlite-vec",
@@ -2368,7 +2370,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "video-tagger"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "thiserror",
  "wd-tagger",
@@ -2468,7 +2470,7 @@ dependencies = [
 
 [[package]]
 name = "wd-tagger"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "csv",
  "image",

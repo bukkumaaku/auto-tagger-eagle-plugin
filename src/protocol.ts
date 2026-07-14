@@ -8,6 +8,8 @@ export type AaaRequest = {
     value: string;
 };
 
+export type CheckForUpdateRequest = Record<string, never>;
+
 export type DownloadFileRequest = {
     url: string;
     destination: string;
@@ -202,6 +204,7 @@ export type LlamafileUnloadRequest = {
 export type CommandPayloadMap = {
     echo: EchoRequest;
     aaa: AaaRequest;
+    check_for_update: CheckForUpdateRequest;
     download_file: DownloadFileRequest;
     read_config: ReadConfigRequest;
     write_config: WriteConfigRequest;
@@ -243,6 +246,13 @@ export type EchoResult = {
 
 export type AaaResult = {
     value: string;
+};
+
+export type CheckForUpdateResult = {
+    currentVersion: string;
+    latestVersion: string;
+    updateAvailable: boolean;
+    releaseUrl: string;
 };
 
 export type DownloadFileResult = {
@@ -434,6 +444,7 @@ export type LlamafileUnloadResult = {
 export type ResultDataMap = {
     echo: EchoResult;
     aaa: AaaResult;
+    check_for_update: CheckForUpdateResult;
     download_file: DownloadFileResult;
     read_config: ReadConfigResult;
     write_config: WriteConfigResult;

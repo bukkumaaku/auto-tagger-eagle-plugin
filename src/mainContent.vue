@@ -23,6 +23,58 @@
 
     const collapsed = ref(true);
     const currentPage = ref("wdtype");
+    let updateCheckStarted = false;
+
+    async function openReleasePage(url: string) {
+        if (eagle.shell?.openExternal) {
+            await eagle.shell.openExternal(url);
+            return;
+        }
+
+        const electron = window.require?.("electron");
+        if (electron?.shell?.openExternal) {
+            await electron.shell.openExternal(url);
+            return;
+        }
+
+        const opened = window.open(url, "_blank");
+        if (!opened) {
+            throw new Error("无法打开 Release 页面");
+        }
+    }
+
+    async function checkForUpdate() {
+        if (updateCheckStarted) return;
+        updateCheckStarted = true;
+
+        try {
+            const result = await backenAPI.checkForUpdate();
+            if (!result.updateAvailable) return;
+
+            dialog.warning({
+                title: t.value("update.title"),
+                content:
+                    `${t.value("update.current_version")}${result.currentVersion}` +
+                    `${t.value("update.latest_version")}${result.latestVersion}` +
+                    t.value("update.open_prompt"),
+                positiveText: t.value("update.open_release"),
+                negativeText: t.value("update.later"),
+                onPositiveClick: async () => {
+                    try {
+                        await openReleasePage(result.releaseUrl);
+                    } catch (error) {
+                        notification(
+                            `${t.value("update.open_failed")}: ${error instanceof Error ? error.message : String(error)}`,
+                            "error",
+                        );
+                    }
+                },
+            });
+        } catch (error) {
+            updateCheckStarted = false;
+            console.warn("检查更新失败", error);
+        }
+    }
 
     const renderIcon = (icon: Component) => {
         return () => h(NIcon, null, { default: () => h(icon) });
@@ -82,9 +134,12 @@
                     if (!result.canceled && result.filePaths?.[0]) {
                         config.modelLocation = result.filePaths[0];
                         await backenAPI.setConfig();
+                        void checkForUpdate();
                     }
                 },
             });
+        } else {
+            void checkForUpdate();
         }
     });
 </script>

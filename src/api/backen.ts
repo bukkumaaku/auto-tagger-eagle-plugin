@@ -68,6 +68,10 @@ export const backenAPI = {
     async setConfig() {
         return getBackendClient().writeConfig(config);
     },
+
+    async checkForUpdate() {
+        return getBackendClient().checkForUpdate();
+    },
     async getTargetItems(isAll: boolean = false) {
         let items = await eagle.item.getSelected();
         if (items.length === 0 || isAll) {

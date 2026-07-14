@@ -4,7 +4,7 @@ English | [简体中文](./README.md)
 
 Eagle Auto Tagger is an Eagle plugin with a Rust backend and Vue interface. It provides image tagging, video tagging, vision-language model processing, and semantic image search.
 
-Current version: `2.0.0`
+Current version: `2.0.1`
 
 ## Features
 
@@ -44,6 +44,7 @@ Current version: `2.0.0`
 
 - A unified task center shows tagging, indexing, search, and download tasks.
 - Model downloads report progress and surface errors.
+- On startup, the plugin checks GitHub Releases and can open the Release download page when a newer version is available.
 - Configuration is read and written by the Rust backend. The default file is `.eagle-auto-tagger/config.json5` under the current user's home directory.
 - Newly added configuration keys are written to JSON5 with their default values.
 - Remote embedding API keys are protected by the operating system credential store and are not written to JSON5 in plain text.
@@ -58,10 +59,10 @@ WD and local embedding inference are handled by Rust: Windows tries DirectML fir
 
 ## Installation
 
-Download the `.eagleplugin` file for your platform from GitHub Releases. The 2.0.0 files are:
+Download the `.eagleplugin` file for your platform from GitHub Releases. The 2.0.1 files are:
 
-- Windows x64: `auto-tagger-eagle-plugin-v2.0.0-win-x64.eagleplugin`
-- macOS ARM64: `auto-tagger-eagle-plugin-v2.0.0-mac-arm64.eagleplugin`
+- Windows x64: `auto-tagger-eagle-plugin-v2.0.1-win-x64.eagleplugin`
+- macOS ARM64: `auto-tagger-eagle-plugin-v2.0.1-mac-arm64.eagleplugin`
 
 Open Eagle, drag the `.eagleplugin` file into the application, and confirm the installation.
 
@@ -170,7 +171,7 @@ cargo test --manifest-path backend/Cargo.toml --workspace
 cargo clippy --manifest-path backend/Cargo.toml --workspace --all-targets -- -D warnings
 ```
 
-GitHub Actions builds Windows x64 and macOS ARM64 when `main` is pushed. Pushing a version-matching `v2.0.0` tag also creates a Release.
+GitHub Actions builds Windows x64 and macOS ARM64 when `main` is pushed. Pushing a version-matching `v2.0.1` tag also creates a Release.
 
 ## Project structure
 

@@ -33,6 +33,15 @@
         "confirm": "Process",
         "reset": "Restore Defaults"
     },
+    "update": {
+        "title": "Update available",
+        "current_version": "Current version: ",
+        "latest_version": "; latest version: ",
+        "open_prompt": ". Open the Release download page?",
+        "open_release": "Open download page",
+        "later": "Later",
+        "open_failed": "Could not open the Release page"
+    },
     "model_download_window": {
         "title": "Download Model Resources",
         "select_model": "Select Model",
