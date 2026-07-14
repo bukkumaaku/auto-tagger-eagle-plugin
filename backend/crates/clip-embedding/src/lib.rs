@@ -4,8 +4,11 @@ use std::path::{Path, PathBuf};
 
 use image::{DynamicImage, ImageFormat, RgbImage, imageops::FilterType};
 use ndarray::{Array2, Array4};
+#[cfg(target_os = "macos")]
+use ort::execution_providers::CoreMLExecutionProvider;
+#[cfg(windows)]
+use ort::execution_providers::DirectMLExecutionProvider;
 use ort::{
-    execution_providers::DirectMLExecutionProvider,
     session::{Session, builder::GraphOptimizationLevel},
     value::TensorRef,
 };
@@ -60,6 +63,9 @@ pub enum ClipError {
 
     #[error("failed to initialize ONNX Runtime: {0}")]
     Ort(#[from] ort::Error),
+
+    #[error("execution provider `{0}` is not supported on this platform")]
+    UnsupportedExecutionProvider(&'static str),
 
     #[error("model is missing required input `{required}`; available inputs: {available:?}")]
     MissingInput {
@@ -266,18 +272,44 @@ fn create_session(path: &Path, provider: ExecutionProvider) -> Result<Session, C
     let builder = Session::builder()?.with_optimization_level(GraphOptimizationLevel::Level3)?;
     let builder = match provider {
         ExecutionProvider::Cpu => builder.with_parallel_execution(true)?,
-        ExecutionProvider::Auto => builder
-            .with_parallel_execution(false)?
-            .with_memory_pattern(false)?
-            .with_execution_providers([DirectMLExecutionProvider::default()
-                .build()
-                .fail_silently()])?,
-        ExecutionProvider::DirectMl => builder
-            .with_parallel_execution(false)?
-            .with_memory_pattern(false)?
-            .with_execution_providers([DirectMLExecutionProvider::default()
-                .build()
-                .error_on_failure()])?,
+        ExecutionProvider::Auto => {
+            #[cfg(windows)]
+            {
+                builder
+                    .with_parallel_execution(false)?
+                    .with_memory_pattern(false)?
+                    .with_execution_providers([DirectMLExecutionProvider::default()
+                        .build()
+                        .fail_silently()])?
+            }
+            #[cfg(target_os = "macos")]
+            {
+                builder
+                    .with_parallel_execution(false)?
+                    .with_execution_providers([CoreMLExecutionProvider::default()
+                        .build()
+                        .fail_silently()])?
+            }
+            #[cfg(not(any(windows, target_os = "macos")))]
+            {
+                builder.with_parallel_execution(true)?
+            }
+        }
+        ExecutionProvider::DirectMl => {
+            #[cfg(windows)]
+            {
+                builder
+                    .with_parallel_execution(false)?
+                    .with_memory_pattern(false)?
+                    .with_execution_providers([DirectMLExecutionProvider::default()
+                        .build()
+                        .error_on_failure()])?
+            }
+            #[cfg(not(windows))]
+            {
+                return Err(ClipError::UnsupportedExecutionProvider("direct_ml"));
+            }
+        }
     };
     Ok(builder.commit_from_file(path)?)
 }

@@ -10,5 +10,11 @@ ort.workspace = true
 thiserror.workspace = true
 tokenizers.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+ort = { workspace = true, features = ["directml"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+ort = { workspace = true, features = ["coreml"] }
+
 [dev-dependencies]
 vector-store.workspace = true

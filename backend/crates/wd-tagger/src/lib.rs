@@ -5,8 +5,11 @@ use image::{
     imageops::{FilterType, overlay, resize},
 };
 use ndarray::Array4;
+#[cfg(target_os = "macos")]
+use ort::execution_providers::CoreMLExecutionProvider;
+#[cfg(windows)]
+use ort::execution_providers::DirectMLExecutionProvider;
 use ort::{
-    execution_providers::DirectMLExecutionProvider,
     session::{Session, builder::GraphOptimizationLevel},
     value::TensorRef,
 };
@@ -78,6 +81,9 @@ pub enum TaggerError {
 
     #[error("failed to initialize ONNX Runtime: {0}")]
     Ort(#[from] ort::Error),
+
+    #[error("execution provider `{0}` is not supported on this platform")]
+    UnsupportedExecutionProvider(&'static str),
 
     #[error("failed to open image {path}: {source}")]
     OpenImage {
@@ -304,14 +310,34 @@ fn create_session(
     let builder = match execution_provider {
         ExecutionProvider::Cpu => builder,
         ExecutionProvider::Auto => {
-            builder.with_execution_providers([DirectMLExecutionProvider::default()
-                .build()
-                .fail_silently()])?
+            #[cfg(windows)]
+            {
+                builder.with_execution_providers([DirectMLExecutionProvider::default()
+                    .build()
+                    .fail_silently()])?
+            }
+            #[cfg(target_os = "macos")]
+            {
+                builder.with_execution_providers([CoreMLExecutionProvider::default()
+                    .build()
+                    .fail_silently()])?
+            }
+            #[cfg(not(any(windows, target_os = "macos")))]
+            {
+                builder
+            }
         }
         ExecutionProvider::DirectMl => {
-            builder.with_execution_providers([DirectMLExecutionProvider::default()
-                .build()
-                .error_on_failure()])?
+            #[cfg(windows)]
+            {
+                builder.with_execution_providers([DirectMLExecutionProvider::default()
+                    .build()
+                    .error_on_failure()])?
+            }
+            #[cfg(not(windows))]
+            {
+                return Err(TaggerError::UnsupportedExecutionProvider("direct_ml"));
+            }
         }
     };
 

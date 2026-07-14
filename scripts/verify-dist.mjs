@@ -1,13 +1,15 @@
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
+import { resolveWorkerPlatform } from "./worker-platform.mjs";
+
+const platform = resolveWorkerPlatform();
 const distDirectory = path.resolve("dist");
-const requiredFiles = [
-    "index.html",
-    "tagset.csv",
-    path.join("bin", "win-x64", "ai-worker.exe"),
-    path.join("bin", "win-x64", "DirectML.dll"),
-];
+const workerPath = path.join("bin", platform.directory, platform.executable);
+const requiredFiles = ["index.html", "tagset.csv", workerPath];
+if (platform.nodePlatform === "win32") {
+    requiredFiles.push(path.join("bin", platform.directory, "DirectML.dll"));
+}
 
 for (const relativePath of requiredFiles) {
     const filePath = path.join(distDirectory, relativePath);
@@ -17,11 +19,26 @@ for (const relativePath of requiredFiles) {
     }
 }
 
+if (platform.nodePlatform === "darwin") {
+    const worker = await stat(path.join(distDirectory, workerPath));
+    if ((worker.mode & 0o111) === 0) {
+        throw new Error(`macOS worker is not executable: ${workerPath}`);
+    }
+}
+
 const manifestPath = path.join(distDirectory, "manifest.json");
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
 if (manifest?.main?.url !== "./index.html") {
     throw new Error(
         `dist manifest must use ./index.html, got ${manifest?.main?.url}`,
+    );
+}
+if (
+    manifest?.platform !== platform.eaglePlatform ||
+    manifest?.arch !== platform.architecture
+) {
+    throw new Error(
+        `dist manifest target mismatch: expected ${platform.eaglePlatform}-${platform.architecture}, got ${manifest?.platform}-${manifest?.arch}`,
     );
 }
 
@@ -48,5 +65,5 @@ for (const obsoletePath of [
 }
 
 console.log(
-    "verified dist artifacts and absence of legacy JavaScript runtimes",
+    `verified ${platform.eaglePlatform}-${platform.architecture} dist artifacts`,
 );

@@ -19,7 +19,7 @@ keyring = { version = "3.6", default-features = false, features = ["apple-native
 llamafile = { path = "crates/llamafile" }
 ndarray = "0.16"
 openai-embedding = { path = "crates/openai-embedding" }
-ort = { version = "=2.0.0-rc.10", features = ["directml"] }
+ort = "=2.0.0-rc.10"
 protocol = { path = "crates/protocol" }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "stream"] }
 rusqlite = { version = "=0.37.0", features = ["bundled"] }

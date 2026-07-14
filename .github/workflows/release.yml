@@ -9,9 +9,25 @@ permissions:
   contents: write
 
 jobs:
-  build-windows:
-    name: Build Windows x64 plugin
-    runs-on: windows-latest
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: plugin-windows-x64
+            package: auto-tagger-eagle-plugin-win-x64.eagleplugin
+          - name: macOS ARM64
+            os: macos-14
+            target: aarch64-apple-darwin
+            artifact: plugin-macos-arm64
+            package: auto-tagger-eagle-plugin-mac-arm64.eagleplugin
+    env:
+      CARGO_BUILD_TARGET: ${{ matrix.target }}
 
     steps:
       - name: Checkout code
@@ -23,28 +39,97 @@ jobs:
           bun-version: "1.3.14"
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.94.0"
+          targets: ${{ matrix.target }}
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: backend
+          key: ${{ matrix.target }}
 
       - name: Install frontend dependencies
-        run: bun install --frozen-lockfile --ignore-scripts
-
-      - name: Build plugin
-        run: bun run build
-
-      - name: Package plugin
         shell: pwsh
         run: |
-          7z a -tzip -mx=9 auto-tagger-eagle-plugin-win-x64.eagleplugin .\dist\*
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          bun install --frozen-lockfile --ignore-scripts
 
-      - name: Upload release package
-        uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Build plugin
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          bun run build
+
+      - name: Validate macOS binary
+        if: matrix.target == 'aarch64-apple-darwin'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $worker = 'dist/bin/mac-arm64/ai-worker'
+          $architectures = (& lipo -archs $worker).Trim()
+          if ($architectures -notmatch '(^|\s)arm64($|\s)') {
+              throw "Expected an arm64 worker, got: $architectures"
+          }
+          $links = (& otool -L $worker) -join "`n"
+          if ($links -notmatch 'CoreML\.framework') {
+              throw 'The macOS worker is not linked with CoreML.framework'
+          }
+
+      - name: Package Windows plugin
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          if (Test-Path -LiteralPath '${{ matrix.package }}') {
+              Remove-Item -LiteralPath '${{ matrix.package }}' -Force
+          }
+          7z a -tzip -mx=9 '${{ matrix.package }}' '.\dist\*'
+
+      - name: Package macOS plugin
+        if: runner.os == 'macOS'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $package = Join-Path $PWD '${{ matrix.package }}'
+          if (Test-Path -LiteralPath $package) {
+              Remove-Item -LiteralPath $package -Force
+          }
+          Push-Location -LiteralPath 'dist'
+          try {
+              zip -9 -r $package .
+          } finally {
+              Pop-Location
+          }
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: auto-tagger-eagle-plugin-win-x64.eagleplugin
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.package }}
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Upload release packages
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.eagleplugin
           prerelease: ${{ contains(github.ref, '-') }}
           generate_release_notes: true

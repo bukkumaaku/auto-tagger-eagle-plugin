@@ -1,59 +1,57 @@
-import { chmod, copyFile, mkdir, stat } from "node:fs/promises";
+import {
+    chmod,
+    copyFile,
+    mkdir,
+    readdir,
+    rm,
+    stat,
+} from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+
+import { resolveWorkerPlatform } from "./worker-platform.mjs";
 
 const profile = process.argv[2];
 if (profile !== "debug" && profile !== "release") {
     throw new Error("usage: bun scripts/copy-worker.mjs <debug|release>");
 }
 
-const platformNames = {
-    win32: "win",
-    darwin: "mac",
-    linux: "linux",
-};
-const architectureNames = {
-    x64: "x64",
-    arm64: "arm64",
-};
-
-const platform = platformNames[process.platform];
-const architecture = architectureNames[process.arch];
-if (!platform || !architecture) {
-    throw new Error(
-        `unsupported worker platform: ${process.platform}-${process.arch}`,
-    );
-}
-
-const executable = process.platform === "win32" ? "ai-worker.exe" : "ai-worker";
-const source = path.resolve("backend", "target", profile, executable);
-const destinationDirectory = path.resolve(
-    "bin",
-    `${platform}-${architecture}`,
+const platform = resolveWorkerPlatform();
+const sourceDirectory = path.resolve(
+    "backend",
+    "target",
+    ...(platform.target ? [platform.target] : []),
+    profile,
 );
-const destination = path.join(destinationDirectory, executable);
+const source = path.join(sourceDirectory, platform.executable);
+const destinationDirectory = path.resolve("bin", platform.directory);
+const destination = path.join(destinationDirectory, platform.executable);
 
 await stat(source).catch(() => {
     throw new Error(`compiled ai-worker was not found at ${source}`);
 });
+await rm(destinationDirectory, { recursive: true, force: true });
 await mkdir(destinationDirectory, { recursive: true });
 await copyFile(source, destination);
 
-if (process.platform === "win32") {
-    const runtimeLibraries = ["DirectML.dll"];
+if (platform.nodePlatform === "win32") {
+    const directMl = path.join(sourceDirectory, "DirectML.dll");
+    await stat(directMl).catch(() => {
+        throw new Error(`worker runtime library was not found at ${directMl}`);
+    });
+    await copyFile(directMl, path.join(destinationDirectory, "DirectML.dll"));
+}
+
+if (platform.nodePlatform === "darwin") {
+    const runtimeLibraries = (await readdir(sourceDirectory)).filter((name) =>
+        name.endsWith(".dylib"),
+    );
     for (const library of runtimeLibraries) {
-        const librarySource = path.resolve("backend", "target", profile, library);
-        await stat(librarySource).catch(() => {
-            throw new Error(`worker runtime library was not found at ${librarySource}`);
-        });
         await copyFile(
-            librarySource,
+            path.join(sourceDirectory, library),
             path.join(destinationDirectory, library),
         );
     }
-}
-
-if (process.platform !== "win32") {
     await chmod(destination, 0o755);
 }
 

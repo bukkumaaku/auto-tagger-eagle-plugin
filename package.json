@@ -8,7 +8,7 @@
         "worker:debug": "cargo build --manifest-path backend/Cargo.toml -p ai-worker && bun scripts/copy-worker.mjs debug",
         "worker:release": "cargo build --manifest-path backend/Cargo.toml --release -p ai-worker && bun scripts/copy-worker.mjs release",
         "dev": "bun run worker:debug && vite",
-        "build": "bun run worker:release && vue-tsc -b && vite build && bun scripts/verify-dist.mjs",
+        "build": "bun run worker:release && vue-tsc -b && vite build && bun scripts/prepare-dist-manifest.mjs && bun scripts/verify-dist.mjs",
         "preview": "vite preview",
         "watch": "bun run worker:debug && vite build --watch"
     },

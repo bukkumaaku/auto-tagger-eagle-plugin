@@ -1,8 +1,8 @@
 {
   "id": "b0c1469d-9eca-4da5-98d6-42b5b5ea8a3f",
   "version": "1.1.1",
-  "platform": "win32",
-  "arch": "x64",
+  "platform": "all",
+  "arch": "all",
   "name": "auto-tagger",
   "logo": "/logo.png",
   "keywords": [],

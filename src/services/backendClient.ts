@@ -453,8 +453,13 @@ export function resolveBundledWorkerPath() {
     const path = require("path");
     const platform = os.platform();
     const architecture = os.arch();
+    const workerTargets: Record<string, { directory: string; executable: string }> = {
+        "win32-x64": { directory: "win-x64", executable: "ai-worker.exe" },
+        "darwin-arm64": { directory: "mac-arm64", executable: "ai-worker" },
+    };
+    const worker = workerTargets[`${platform}-${architecture}`];
 
-    if (platform !== "win32" || architecture !== "x64") {
+    if (!worker) {
         throw new BackendClientError(
             "UNSUPPORTED_WORKER_PLATFORM",
             `no bundled ai-worker for ${platform}-${architecture}`,
@@ -468,8 +473,8 @@ export function resolveBundledWorkerPath() {
         return path.join(
             projectRoot,
             "bin",
-            "win-x64",
-            "ai-worker.exe",
+            worker.directory,
+            worker.executable,
         );
     }
 
@@ -478,8 +483,8 @@ export function resolveBundledWorkerPath() {
     return path.join(
         pluginDirectory,
         "bin",
-        "win-x64",
-        "ai-worker.exe",
+        worker.directory,
+        worker.executable,
     );
 }
 
@@ -501,6 +506,9 @@ function resolveProductionPluginDirectory(path: any): string {
         );
         if (path.win32.isAbsolute(pathname)) {
             return path.win32.dirname(path.win32.normalize(pathname));
+        }
+        if (path.posix.isAbsolute(pathname)) {
+            return path.posix.dirname(path.posix.normalize(pathname));
         }
     }
 
