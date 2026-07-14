@@ -1,0 +1,42 @@
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+base64 = "0.22"
+config-store = { path = "crates/config-store" }
+csv = "1"
+downloader = { path = "crates/downloader" }
+futures-util = "0.3"
+gemini-embedding = { path = "crates/gemini-embedding" }
+image = { version = "0.25", default-features = false, features = ["bmp", "jpeg", "png", "webp"] }
+json5 = "0.4"
+keyring = { version = "3.6", default-features = false, features = ["apple-native", "windows-native"] }
+llamafile = { path = "crates/llamafile" }
+ndarray = "0.16"
+openai-embedding = { path = "crates/openai-embedding" }
+ort = { version = "=2.0.0-rc.10", features = ["directml"] }
+protocol = { path = "crates/protocol" }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "stream"] }
+rusqlite = { version = "=0.37.0", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlite-vec = "=0.1.9"
+thiserror = "2"
+tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"] }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "time"] }
+clip-embedding = { path = "crates/clip-embedding" }
+vector-store = { path = "crates/vector-store" }
+video-tagger = { path = "crates/video-tagger" }
+wd-tagger = { path = "crates/wd-tagger" }
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+opt-level = "z"
+panic = "abort"
+strip = "symbols"

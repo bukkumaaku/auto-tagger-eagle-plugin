@@ -1,20 +1,25 @@
 {
-    "id": "d7d5bc15-2487-49f4-9462-e38d143ada0a",
-    "version": "1.1.0",
-    "platform": "all",
-    "arch": "all",
-    "name": "auto-tagger",
-    "logo": "/logo.png",
-    "keywords": [],
-    "fallbackLanguage": "zh_CN",
-    "languages": ["en", "zh_CN"],
-    "devTools": false,
-    "dependencies": ["ffmpeg"],
-    "main": {
-        "serviceMode": true,
-        "url": "index.html",
-        "width": 850,
-        "height": 750,
-        "frame": false
-    }
+  "id": "b0c1469d-9eca-4da5-98d6-42b5b5ea8a3f",
+  "version": "1.1.1",
+  "platform": "win32",
+  "arch": "x64",
+  "name": "auto-tagger",
+  "logo": "/logo.png",
+  "keywords": [],
+  "fallbackLanguage": "zh_CN",
+  "languages": [
+    "en",
+    "zh_CN"
+  ],
+  "devTools": false,
+  "dependencies": [
+    "ffmpeg"
+  ],
+  "main": {
+    "serviceMode": true,
+    "url": "./index.html",
+    "width": 1250,
+    "height": 850,
+    "frame": false
+  }
 }

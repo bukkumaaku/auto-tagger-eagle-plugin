@@ -1,0 +1,28 @@
+.questionMark {
+    width: 19px;
+    height: 19px;
+    margin-right: 5px;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html,body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+}
+
+#app {
+    width: 100%;
+    height: 100%;
+}
+
+.n-notification-container.n-notification-container--top-right,
+.n-notification-container.n-notification-container--top-left {
+    top: 30px !important;
+}

@@ -1,0 +1,8 @@
+[package]
+name = "video-tagger"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+wd-tagger.workspace = true

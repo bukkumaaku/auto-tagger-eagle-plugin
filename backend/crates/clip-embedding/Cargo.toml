@@ -1,0 +1,14 @@
+[package]
+name = "clip-embedding"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+image.workspace = true
+ndarray.workspace = true
+ort.workspace = true
+thiserror.workspace = true
+tokenizers.workspace = true
+
+[dev-dependencies]
+vector-store.workspace = true

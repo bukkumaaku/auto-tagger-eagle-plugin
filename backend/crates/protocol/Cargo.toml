@@ -1,0 +1,9 @@
+[package]
+name = "protocol"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+config-store.workspace = true
+serde.workspace = true
+serde_json.workspace = true

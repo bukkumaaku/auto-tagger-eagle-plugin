@@ -1,40 +1,50 @@
-# dependencies (bun install)
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# Dependencies and build output
 node_modules
-
-# output
-out
 dist
+dist-ssr
+out
+docs/
 *.tgz
-
-# code coverage
+target
+backend/target
+/bin/
 coverage
 *.lcov
+*.tsbuildinfo
 
-# logs
-logs
-_.log
-report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
-
-# dotenv environment variable files
+# Local configuration and caches
 .env
 .env.development.local
 .env.test.local
 .env.production.local
 .env.local
-
-# caches
+*.local
 .eslintcache
 .cache
-*.tsbuildinfo
+config.private.json
 
-# IntelliJ based IDEs
+# Editor and operating system files
+.vscode/*
+!.vscode/extensions.json
 .idea
-
-# Finder (MacOS) folder config
 .DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
 
+# Local models
 models/*
 !models/请将模型文件夹放在此处.txt
 !models/PLACE_THE_MODEL_FOLDER_HERE.txt
-
-config.private.json

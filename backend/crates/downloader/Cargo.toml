@@ -1,0 +1,10 @@
+[package]
+name = "downloader"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+futures-util.workspace = true
+reqwest.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
