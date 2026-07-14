@@ -22,12 +22,12 @@ jobs:
             os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: plugin-windows-x64
-            package: auto-tagger-eagle-plugin-win-x64.eagleplugin
+            package_suffix: win-x64
           - name: macOS ARM64
             os: macos-14
             target: aarch64-apple-darwin
             artifact: plugin-macos-arm64
-            package: auto-tagger-eagle-plugin-mac-arm64.eagleplugin
+            package_suffix: mac-arm64
     env:
       CARGO_BUILD_TARGET: ${{ matrix.target }}
 
@@ -51,6 +51,21 @@ jobs:
         with:
           workspaces: backend
           key: ${{ matrix.target }}
+
+      - name: Read plugin version
+        id: version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $manifest = Get-Content -LiteralPath 'manifest.json' -Raw -Encoding UTF8 | ConvertFrom-Json
+          $package = Get-Content -LiteralPath 'package.json' -Raw -Encoding UTF8 | ConvertFrom-Json
+          if ($manifest.version -ne $package.version) {
+              throw "Version mismatch: manifest=$($manifest.version), package=$($package.version)"
+          }
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$($manifest.version)") {
+              throw "Tag $env:GITHUB_REF_NAME does not match plugin version v$($manifest.version)"
+          }
+          "value=$($manifest.version)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding UTF8 -Append
 
       - name: Install frontend dependencies
         shell: pwsh
@@ -82,39 +97,34 @@ jobs:
               throw 'The macOS worker is not linked with CoreML.framework'
           }
 
-      - name: Package Windows plugin
-        if: runner.os == 'Windows'
+      - name: Package plugin
+        id: package
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
-          if (Test-Path -LiteralPath '${{ matrix.package }}') {
-              Remove-Item -LiteralPath '${{ matrix.package }}' -Force
-          }
-          7z a -tzip -mx=9 '${{ matrix.package }}' '.\dist\*'
-
-      - name: Package macOS plugin
-        if: runner.os == 'macOS'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $PSNativeCommandUseErrorActionPreference = $true
-          $package = Join-Path $PWD '${{ matrix.package }}'
+          $packageName = 'auto-tagger-eagle-plugin-v${{ steps.version.outputs.value }}-${{ matrix.package_suffix }}.eagleplugin'
+          $package = Join-Path $PWD $packageName
           if (Test-Path -LiteralPath $package) {
               Remove-Item -LiteralPath $package -Force
           }
-          Push-Location -LiteralPath 'dist'
-          try {
-              zip -9 -r $package .
-          } finally {
-              Pop-Location
+          if ($env:RUNNER_OS -eq 'Windows') {
+              7z a -tzip -mx=9 $package '.\dist\*'
+          } else {
+              Push-Location -LiteralPath 'dist'
+              try {
+                  zip -9 -r $package .
+              } finally {
+                  Pop-Location
+              }
           }
+          "path=$packageName" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding UTF8 -Append
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.package }}
+          name: ${{ matrix.artifact }}-v${{ steps.version.outputs.value }}
+          path: ${{ steps.package.outputs.path }}
           if-no-files-found: error
 
   release:
