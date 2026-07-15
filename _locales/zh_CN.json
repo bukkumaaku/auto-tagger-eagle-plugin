@@ -33,6 +33,10 @@
         "confirm": "确认",
         "reset": "恢复默认"
     },
+    "window": {
+        "minimize": "最小化",
+        "close": "关闭"
+    },
     "update": {
         "title": "发现新版本",
         "current_version": "当前版本：",

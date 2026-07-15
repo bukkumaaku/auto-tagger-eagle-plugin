@@ -1,5 +1,6 @@
 <script lang="ts" setup>
-    import { NThing, NSpace, NButton } from "naive-ui";
+    import { NThing, NSpace, NIcon } from "naive-ui";
+    import { CloseOutline, RemoveOutline } from "@vicons/ionicons5";
     import { t } from "../api/backen";
 
     const handleMinimize = async () => {
@@ -32,31 +33,55 @@
             "
             >{{ t("index.title") }}</n-thing
         >
-        <n-thing>
-            <n-button
+        <div class="titlebar-actions">
+            <button
+                type="button"
+                class="titlebar-button"
+                :title="t('window.minimize')"
+                :aria-label="t('window.minimize')"
                 @click="handleMinimize"
-                size="small"
-                quaternary
-                style="-webkit-app-region: no-drag"
             >
-                <img
-                    src="../assets/images/min.png"
-                    alt="min"
-                    style="width: 18px; height: 18px"
-                />
-            </n-button>
-            <n-button
+                <n-icon :size="18"><RemoveOutline /></n-icon>
+            </button>
+            <button
+                type="button"
+                class="titlebar-button titlebar-close"
+                :title="t('window.close')"
+                :aria-label="t('window.close')"
                 @click="handleClose"
-                size="small"
-                quaternary
-                style="-webkit-app-region: no-drag"
             >
-                <img
-                    src="../assets/images/close.png"
-                    style="width: 18px; height: 18px"
-                    alt="close"
-                />
-            </n-button>
-        </n-thing>
+                <n-icon :size="18"><CloseOutline /></n-icon>
+            </button>
+        </div>
     </n-space>
 </template>
+
+<style scoped>
+    .titlebar-actions {
+        height: 30px;
+        display: flex;
+        -webkit-app-region: no-drag;
+    }
+
+    .titlebar-button {
+        width: 40px;
+        height: 30px;
+        display: inline-grid;
+        place-items: center;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+        -webkit-app-region: no-drag;
+    }
+
+    .titlebar-button:hover {
+        background: rgba(255, 255, 255, 0.1);
+    }
+
+    .titlebar-close:hover {
+        background: #c42b1c;
+        color: #fff;
+    }
+</style>

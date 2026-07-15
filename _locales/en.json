@@ -33,6 +33,10 @@
         "confirm": "Process",
         "reset": "Restore Defaults"
     },
+    "window": {
+        "minimize": "Minimize",
+        "close": "Close"
+    },
     "update": {
         "title": "Update available",
         "current_version": "Current version: ",
