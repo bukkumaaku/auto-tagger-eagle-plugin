@@ -25,6 +25,7 @@ use super::{HandlerError, HandlerResult};
 
 const SESSION_PREFIX: &str = "embedding:";
 const SOURCE_KEY: &str = "primary";
+const TEXT_QUERY_SOURCE_KEY: &str = "search-query";
 const MAX_SEARCH_RESULTS: usize = 4_096;
 const OPENAI_IMAGE_CONCURRENCY_LIMIT: usize = 16;
 const GEMINI_IMAGE_PREPROCESS_CONCURRENCY: usize = 6;
@@ -386,19 +387,38 @@ pub fn search_text(
             hits: Vec::new(),
         });
     }
-    let query = session
-        .engine
-        .embed_text(&request.text)
-        .map_err(|error| HandlerError::new("EMBEDDING_FAILED", error))?;
+    let text = request.text.trim();
+    let namespace = session.settings.namespace.clone();
+    let query = if let Some(stored) = session
+        .store
+        .get_embedding(&namespace, text, Modality::Text, TEXT_QUERY_SOURCE_KEY)
+        .map_err(store_error)?
+    {
+        stored.embedding
+    } else {
+        let embedding = session
+            .engine
+            .embed_text(text)
+            .map_err(|error| HandlerError::new("EMBEDDING_FAILED", error))?;
+        session
+            .store
+            .upsert(&VectorRecord {
+                namespace: namespace.clone(),
+                item_id: text.to_string(),
+                modality: Modality::Text,
+                source_key: TEXT_QUERY_SOURCE_KEY.to_string(),
+                source_uri: None,
+                content: Some(text.to_string()),
+                updated_at: 0,
+                embedding: embedding.clone(),
+            })
+            .map_err(store_error)?;
+        embedding
+    };
     let fetch_count = request.top_k.min(available);
     let results = session
         .store
-        .search(
-            &session.settings.namespace,
-            Some(Modality::Image),
-            &query,
-            fetch_count,
-        )
+        .search(&namespace, Some(Modality::Image), &query, fetch_count)
         .map_err(store_error)?;
 
     Ok(EmbeddingSearchResult {
@@ -422,20 +442,52 @@ pub fn search_image(
             hits: Vec::new(),
         });
     }
-    let query = session
-        .engine
-        .embed_image(&request.image_path)
-        .map_err(|error| HandlerError::new("EMBEDDING_FAILED", error))?;
+    let namespace = session.settings.namespace.clone();
+    let cached = if request.exclude_item_id.is_empty() {
+        None
+    } else {
+        session
+            .store
+            .get_embedding(
+                &namespace,
+                &request.exclude_item_id,
+                Modality::Image,
+                SOURCE_KEY,
+            )
+            .map_err(store_error)?
+    };
+    let query = if let Some(stored) = cached.filter(|stored| {
+        stored.source_uri.as_deref() == Some(request.image_path.as_str())
+            && stored.updated_at >= request.image_modified_at
+    }) {
+        stored.embedding
+    } else {
+        let embedding = session
+            .engine
+            .embed_image(&request.image_path)
+            .map_err(|error| HandlerError::new("EMBEDDING_FAILED", error))?;
+        if !request.exclude_item_id.is_empty() {
+            session
+                .store
+                .upsert(&VectorRecord {
+                    namespace: namespace.clone(),
+                    item_id: request.exclude_item_id.clone(),
+                    modality: Modality::Image,
+                    source_key: SOURCE_KEY.to_string(),
+                    source_uri: Some(request.image_path.clone()),
+                    content: None,
+                    updated_at: request.image_modified_at,
+                    embedding: embedding.clone(),
+                })
+                .map_err(store_error)?;
+        }
+        embedding
+    };
     let result_count = request.top_k.min(available);
     let fetch_count = image_search_fetch_count(result_count, available);
     let results = session
         .store
-        .search(
-            &session.settings.namespace,
-            Some(Modality::Image),
-            &query,
-            fetch_count,
-        )
+        .search(&namespace, Some(Modality::Image), &query, fetch_count)
         .map_err(store_error)?;
 
     Ok(EmbeddingSearchResult {
@@ -1048,6 +1100,35 @@ mod tests {
         assert_eq!(results.hits.len(), 1);
         assert_eq!(results.hits[0].item_id, "image-1");
         assert!(results.hits[0].similarity > 0.999);
+
+        let cached_text_results = search_text(
+            EmbeddingSearchTextRequest {
+                session_id: "remote".to_string(),
+                text: "query".to_string(),
+                top_k: 1,
+            },
+            &sessions,
+        )
+        .unwrap();
+        assert_eq!(cached_text_results.hits.len(), 1);
+        assert_eq!(cached_text_results.hits[0].item_id, results.hits[0].item_id);
+        assert!(
+            (cached_text_results.hits[0].similarity - results.hits[0].similarity).abs()
+                < f64::EPSILON
+        );
+
+        let cached_image_results = search_image(
+            EmbeddingSearchImageRequest {
+                session_id: "remote".to_string(),
+                image_path: image_path.to_string_lossy().into_owned(),
+                exclude_item_id: "image-1".to_string(),
+                image_modified_at: 1,
+                top_k: 1,
+            },
+            &sessions,
+        )
+        .unwrap();
+        assert!(cached_image_results.hits.is_empty());
 
         unload(
             EmbeddingUnloadRequest {

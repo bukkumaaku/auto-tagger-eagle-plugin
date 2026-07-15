@@ -246,12 +246,14 @@ export class BackendClient {
         sessionId: string,
         imagePath: string,
         excludeItemId: string,
+        imageModifiedAt: number,
         topK: number,
     ): Promise<EmbeddingSearchResult> {
         return this.request("embedding_search_image", {
             sessionId,
             imagePath,
             excludeItemId,
+            imageModifiedAt,
             topK,
         });
     }

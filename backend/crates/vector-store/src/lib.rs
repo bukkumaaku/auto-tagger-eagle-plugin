@@ -63,6 +63,14 @@ pub struct StoredItem {
     pub source_uri: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct StoredEmbedding {
+    pub source_uri: Option<String>,
+    pub content: Option<String>,
+    pub updated_at: i64,
+    pub embedding: Vec<f32>,
+}
+
 #[derive(Debug, Error)]
 pub enum StoreError {
     #[error("model key cannot be empty")]
@@ -86,6 +94,9 @@ pub enum StoreError {
 
     #[error("embedding has zero L2 norm")]
     ZeroNormEmbedding,
+
+    #[error("stored embedding has {actual} bytes, expected {expected}")]
+    InvalidStoredEmbeddingLength { actual: usize, expected: usize },
 
     #[error("namespace, item_id, and source_key cannot be empty")]
     EmptyKey,
@@ -390,6 +401,52 @@ impl VectorStore {
             .optional()?)
     }
 
+    pub fn get_embedding(
+        &self,
+        namespace: &str,
+        item_id: &str,
+        modality: Modality,
+        source_key: &str,
+    ) -> Result<Option<StoredEmbedding>, StoreError> {
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT i.source_uri, i.content, i.updated_at, v.embedding
+             FROM model_vector_items i
+             JOIN {} v ON v.rowid = i.id
+             WHERE i.model_id = ?1 AND i.namespace = ?2 AND i.item_id = ?3
+               AND i.modality = ?4 AND i.source_key = ?5",
+            self.vector_table
+        ))?;
+        let stored = statement
+            .query_row(
+                params![
+                    self.model_id,
+                    namespace,
+                    item_id,
+                    modality.as_str(),
+                    source_key
+                ],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, Vec<u8>>(3)?,
+                    ))
+                },
+            )
+            .optional()?;
+        stored
+            .map(|(source_uri, content, updated_at, blob)| {
+                Ok(StoredEmbedding {
+                    source_uri,
+                    content,
+                    updated_at,
+                    embedding: embedding_from_blob(&blob, self.dimension)?,
+                })
+            })
+            .transpose()
+    }
+
     pub fn search(
         &self,
         namespace: &str,
@@ -598,6 +655,20 @@ fn embedding_blob(embedding: &[f32]) -> Vec<u8> {
         .collect()
 }
 
+fn embedding_from_blob(blob: &[u8], dimension: usize) -> Result<Vec<f32>, StoreError> {
+    let expected = dimension * std::mem::size_of::<f32>();
+    if blob.len() != expected {
+        return Err(StoreError::InvalidStoredEmbeddingLength {
+            actual: blob.len(),
+            expected,
+        });
+    }
+    Ok(blob
+        .chunks_exact(std::mem::size_of::<f32>())
+        .map(|bytes| f32::from_le_bytes(bytes.try_into().expect("four-byte f32 chunk")))
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -682,6 +753,30 @@ mod tests {
         assert_eq!(
             store.count_modality("library-a", Modality::Text).unwrap(),
             0
+        );
+    }
+
+    #[test]
+    fn retrieves_embedding_by_full_identity() {
+        let mut store = memory_store(2);
+        let mut stored = record("item", Modality::Image, vec![0.25, 0.75]);
+        stored.content = Some("sample".to_string());
+        stored.updated_at = 42;
+        store.upsert(&stored).unwrap();
+
+        let embedding = store
+            .get_embedding("library-a", "item", Modality::Image, "primary")
+            .unwrap()
+            .unwrap();
+        assert_eq!(embedding.source_uri.as_deref(), Some("item.png"));
+        assert_eq!(embedding.content.as_deref(), Some("sample"));
+        assert_eq!(embedding.updated_at, 42);
+        assert_eq!(embedding.embedding, vec![0.25, 0.75]);
+        assert!(
+            store
+                .get_embedding("library-a", "missing", Modality::Image, "primary")
+                .unwrap()
+                .is_none()
         );
     }
 
