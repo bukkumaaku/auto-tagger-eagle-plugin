@@ -47,6 +47,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "text-vector-store",
  "thiserror",
  "vector-store",
  "video-tagger",

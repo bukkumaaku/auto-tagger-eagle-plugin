@@ -101,9 +101,13 @@ impl CommandHandler for BuiltinHandlers {
                 embedding::index_batch(request, &self.sessions)
                     .map(ResultPayload::EmbeddingIndexBatch)
             }
+            Command::EmbeddingIndexTags(request) => embedding::index_tags(request, &self.sessions)
+                .map(ResultPayload::EmbeddingIndexTags),
             Command::EmbeddingPrune(request) => {
                 embedding::prune(request, &self.sessions).map(ResultPayload::EmbeddingPrune)
             }
+            Command::EmbeddingPruneTags(request) => embedding::prune_tags(request, &self.sessions)
+                .map(ResultPayload::EmbeddingPruneTags),
             Command::EmbeddingHealth(request) => {
                 embedding::health(request, &self.sessions).map(ResultPayload::EmbeddingHealth)
             }

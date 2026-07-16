@@ -175,6 +175,7 @@ import {
             const model = await resolveSelectedModel();
             if (!model) throw new Error("无法定位当前 WD 模型目录，已取消打标");
             createTaggerBackup(model.modelPath, "wd", items);
+            await refreshBackups();
             allItem.value = items.length;
             completeItem.value = 0;
             updateTask(startedTask, {

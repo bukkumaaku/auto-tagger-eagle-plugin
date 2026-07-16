@@ -449,6 +449,7 @@ import {
                 mode === "tag" ? "llm-tag" : "llm-annotation",
                 items,
             );
+            await refreshBackups();
         } catch (error) {
             notification(
                 error instanceof Error ? error.message : String(error),

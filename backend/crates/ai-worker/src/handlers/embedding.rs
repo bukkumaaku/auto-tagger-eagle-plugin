@@ -1,4 +1,8 @@
-use std::{collections::HashSet, fs, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+    path::PathBuf,
+};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use clip_embedding::{
@@ -11,12 +15,14 @@ use openai_embedding::{ClientConfig, EmbeddingRequest, OpenAiEmbeddingClient};
 use protocol::{
     EmbeddingExecutionProvider, EmbeddingHealthItem, EmbeddingHealthRequest, EmbeddingHealthResult,
     EmbeddingImageFailure, EmbeddingIndexBatchRequest, EmbeddingIndexBatchResult,
-    EmbeddingLoadRequest, EmbeddingLoadResult, EmbeddingProvider, EmbeddingPruneRequest,
-    EmbeddingPruneResult, EmbeddingSearchHit, EmbeddingSearchImageRequest, EmbeddingSearchResult,
-    EmbeddingSearchTextRequest, EmbeddingStatusRequest, EmbeddingStatusResult,
-    EmbeddingUnloadRequest, EmbeddingUnloadResult,
+    EmbeddingIndexTagsRequest, EmbeddingIndexTagsResult, EmbeddingLoadRequest, EmbeddingLoadResult,
+    EmbeddingProvider, EmbeddingPruneRequest, EmbeddingPruneResult, EmbeddingPruneTagsRequest,
+    EmbeddingPruneTagsResult, EmbeddingSearchHit, EmbeddingSearchImageRequest,
+    EmbeddingSearchResult, EmbeddingSearchTextRequest, EmbeddingStatusRequest,
+    EmbeddingStatusResult, EmbeddingTagFailure, EmbeddingUnloadRequest, EmbeddingUnloadResult,
 };
 use serde_json::json;
+use text_vector_store::{TextDocumentRecord, TextVectorRecord, TextVectorStore};
 use vector_store::{Modality, SearchResult, VectorRecord, VectorStore};
 
 use crate::sessions::{SessionError, SessionManager};
@@ -50,6 +56,7 @@ struct EmbeddingSession {
     settings: EmbeddingSessionSettings,
     engine: EmbeddingEngine,
     store: VectorStore,
+    text_store: TextVectorStore,
 }
 
 enum EmbeddingEngine {
@@ -120,6 +127,8 @@ pub fn load(
             session_id: request.session_id,
             model_key: session.settings.model_key.clone(),
             indexed_count: indexed_count(&session)?,
+            tag_indexed_count: tag_indexed_count(&session)?,
+            tag_link_count: tag_link_count(&session)?,
             reused: true,
         });
     }
@@ -132,6 +141,8 @@ pub fn load(
         session_id: request.session_id,
         model_key: session.settings.model_key.clone(),
         indexed_count: indexed_count(&session)?,
+        tag_indexed_count: tag_indexed_count(&session)?,
+        tag_link_count: tag_link_count(&session)?,
         reused: false,
     })
 }
@@ -253,6 +264,127 @@ pub fn index_batch(
     })
 }
 
+pub fn index_tags(
+    request: EmbeddingIndexTagsRequest,
+    sessions: &SessionManager,
+) -> HandlerResult<EmbeddingIndexTagsResult> {
+    validate_session_id(&request.session_id)?;
+    let handle = embedding_session(sessions, &request.session_id)?;
+    let mut session = handle.lock().map_err(session_error)?;
+    let session_id = request.session_id.clone();
+    let namespace = session.settings.namespace.clone();
+    let mut links = Vec::with_capacity(request.items.len());
+    let mut unique_tags = HashMap::<String, ()>::new();
+
+    for item in request.items {
+        if item.item_id.trim().is_empty() {
+            continue;
+        }
+        let tags = item
+            .tags
+            .into_iter()
+            .map(|tag| tag.trim().to_string())
+            .filter(|tag| !tag.is_empty())
+            .collect::<HashSet<_>>();
+        let mut tags = tags.into_iter().collect::<Vec<_>>();
+        tags.sort();
+        for tag in &tags {
+            unique_tags.insert(tag.clone(), ());
+        }
+        links.push((item.item_id, tags));
+    }
+
+    let mut documents = Vec::with_capacity(unique_tags.len());
+    for tag in unique_tags.keys() {
+        let document = TextDocumentRecord {
+            namespace: namespace.clone(),
+            kind: "tag".to_string(),
+            document_id: tag.clone(),
+            content: tag.clone(),
+            updated_at: 0,
+        };
+        session
+            .text_store
+            .upsert_document(&document)
+            .map_err(store_error)?;
+        if session
+            .text_store
+            .needs_embedding(&namespace, "tag", tag, tag)
+            .map_err(store_error)?
+        {
+            documents.push(document);
+        }
+    }
+
+    let mut failures = Vec::new();
+    let mut indexed_tags = 0_u64;
+    for (document, result) in documents.iter().zip(
+        session.engine.embed_texts(
+            &documents
+                .iter()
+                .map(|item| item.content.clone())
+                .collect::<Vec<_>>(),
+        ),
+    ) {
+        match result {
+            Ok(embedding) => {
+                session
+                    .text_store
+                    .upsert(&TextVectorRecord {
+                        document: document.clone(),
+                        embedding,
+                    })
+                    .map_err(store_error)?;
+                indexed_tags += 1;
+            }
+            Err(error) => failures.push(EmbeddingTagFailure {
+                tag: document.document_id.clone(),
+                error,
+            }),
+        }
+    }
+
+    for (item_id, tags) in links {
+        session
+            .text_store
+            .replace_item_links(&namespace, "tag", &item_id, &tags)
+            .map_err(store_error)?;
+    }
+    let total_tags = tag_indexed_count(&session)?;
+    let total_links = tag_link_count(&session)?;
+    let skipped_tags = unique_tags.len() as u64 - indexed_tags - failures.len() as u64;
+
+    Ok(EmbeddingIndexTagsResult {
+        session_id,
+        indexed_tags,
+        skipped_tags,
+        total_tags,
+        total_links,
+        failures,
+    })
+}
+
+pub fn prune_tags(
+    request: EmbeddingPruneTagsRequest,
+    sessions: &SessionManager,
+) -> HandlerResult<EmbeddingPruneTagsResult> {
+    validate_session_id(&request.session_id)?;
+    let handle = embedding_session(sessions, &request.session_id)?;
+    let mut session = handle.lock().map_err(session_error)?;
+    let session_id = request.session_id.clone();
+    let namespace = session.settings.namespace.clone();
+    let removed_tags = session
+        .text_store
+        .prune_unlinked_documents(&namespace, "tag")
+        .map_err(store_error)?;
+    Ok(EmbeddingPruneTagsResult {
+        session_id,
+        removed_tags,
+        total_tags: tag_indexed_count(&session)?,
+        total_links: tag_link_count(&session)?,
+    })
+}
+
 fn embed_pending_individually(
     engine: &mut EmbeddingEngine,
     pending: Vec<protocol::EmbeddingImageInput>,
@@ -369,6 +501,8 @@ pub fn status(
         session_id: request.session_id,
         model_key: session.settings.model_key.clone(),
         indexed_count: indexed_count(&session)?,
+        tag_indexed_count: tag_indexed_count(&session)?,
+        tag_link_count: tag_link_count(&session)?,
     })
 }
 
@@ -420,10 +554,17 @@ pub fn search_text(
         .store
         .search(&namespace, Some(Modality::Image), &query, fetch_count)
         .map_err(store_error)?;
+    let hits = search_hits(results, None, fetch_count);
+    let hits = if request.include_tags {
+        merge_tag_hits(&session.text_store, &namespace, &query, hits, fetch_count)
+            .map_err(store_error)?
+    } else {
+        hits
+    };
 
     Ok(EmbeddingSearchResult {
         session_id: request.session_id,
-        hits: search_hits(results, None, fetch_count),
+        hits,
     })
 }
 
@@ -533,10 +674,13 @@ fn create_session(settings: EmbeddingSessionSettings) -> Result<EmbeddingSession
     let dimension = engine.dimension();
     let store = VectorStore::open(&settings.database_path, &settings.model_key, dimension)
         .map_err(|error| error.to_string())?;
+    let text_store = TextVectorStore::open(&settings.database_path, &settings.model_key, dimension)
+        .map_err(|error| error.to_string())?;
     Ok(EmbeddingSession {
         settings,
         engine,
         store,
+        text_store,
     })
 }
 
@@ -558,6 +702,23 @@ impl EmbeddingEngine {
             Self::Local(clip) => clip.embed_text(text).map_err(|error| error.to_string()),
             Self::OpenAi(remote) => remote.embed_text(text),
             Self::Gemini(remote) => remote.embed_text(text),
+        }
+    }
+
+    fn embed_texts(&mut self, texts: &[String]) -> Vec<Result<Vec<f32>, String>> {
+        match self {
+            Self::Local(clip) => texts
+                .iter()
+                .map(|text| clip.embed_text(text).map_err(|error| error.to_string()))
+                .collect(),
+            Self::OpenAi(remote) => parallel_map(texts, OPENAI_IMAGE_CONCURRENCY_LIMIT, |text| {
+                remote.embed_text(text)
+            }),
+            Self::Gemini(remote) => {
+                parallel_map(texts, GEMINI_IMAGE_REQUEST_CONCURRENCY_LIMIT, |text| {
+                    remote.embed_text(text)
+                })
+            }
         }
     }
 
@@ -828,6 +989,82 @@ fn indexed_count(session: &EmbeddingSession) -> HandlerResult<u64> {
         .map_err(store_error)
 }
 
+fn tag_indexed_count(session: &EmbeddingSession) -> HandlerResult<u64> {
+    session
+        .text_store
+        .count_embeddings(&session.settings.namespace, "tag")
+        .map_err(store_error)
+}
+
+fn tag_link_count(session: &EmbeddingSession) -> HandlerResult<u64> {
+    session
+        .text_store
+        .count_links(&session.settings.namespace, "tag")
+        .map_err(store_error)
+}
+
+fn merge_tag_hits(
+    store: &TextVectorStore,
+    namespace: &str,
+    query: &[f32],
+    mut image_hits: Vec<EmbeddingSearchHit>,
+    top_k: usize,
+) -> Result<Vec<EmbeddingSearchHit>, text_vector_store::StoreError> {
+    if image_hits.is_empty() {
+        return Ok(image_hits);
+    }
+    let tag_count = store.count_embeddings(namespace, "tag")? as usize;
+    if tag_count == 0 {
+        return Ok(image_hits);
+    }
+    let tag_results = store.search(namespace, "tag", query, tag_count.min(64))?;
+    let candidates = image_hits
+        .iter()
+        .map(|hit| hit.item_id.as_str())
+        .collect::<HashSet<_>>();
+    let mut tag_scores = HashMap::<String, f64>::new();
+    for (rank, tag) in tag_results.iter().enumerate() {
+        let tag_weight = tag.similarity.max(0.0) / (rank as f64 + 1.0);
+        if tag_weight <= f64::EPSILON {
+            continue;
+        }
+        for item_id in store.linked_item_ids(tag.document_row_id)? {
+            if candidates.contains(item_id.as_str()) {
+                *tag_scores.entry(item_id).or_default() += tag_weight;
+            }
+        }
+    }
+    let mut ranked_tags = tag_scores.into_iter().collect::<Vec<_>>();
+    ranked_tags.sort_by(|left, right| right.1.total_cmp(&left.1));
+    let tag_ranks = ranked_tags
+        .into_iter()
+        .enumerate()
+        .map(|(rank, (item_id, _))| (item_id, rank))
+        .collect::<HashMap<_, _>>();
+    if tag_ranks.is_empty() {
+        return Ok(image_hits);
+    }
+    let mut max_score = 0.0_f64;
+    for (rank, hit) in image_hits.iter_mut().enumerate() {
+        let image_score = 1.0 / (60.0 + rank as f64);
+        let tag_score = tag_ranks
+            .get(&hit.item_id)
+            .map(|tag_rank| 1.0 / (60.0 + *tag_rank as f64))
+            .unwrap_or(0.0);
+        let score = image_score * 0.7 + tag_score * 0.3;
+        max_score = max_score.max(score);
+        hit.similarity = score;
+    }
+    if max_score > 0.0 {
+        for hit in &mut image_hits {
+            hit.similarity /= max_score;
+        }
+    }
+    image_hits.sort_by(|left, right| right.similarity.total_cmp(&left.similarity));
+    image_hits.truncate(top_k);
+    Ok(image_hits)
+}
+
 fn search_hits(
     results: Vec<SearchResult>,
     excluded_item_id: Option<&str>,
@@ -972,6 +1209,7 @@ mod tests {
                 session_id: "missing".to_string(),
                 text: "query".to_string(),
                 top_k: 0,
+                include_tags: false,
             },
             &SessionManager::default(),
         )
@@ -1093,6 +1331,7 @@ mod tests {
                 session_id: "remote".to_string(),
                 text: "query".to_string(),
                 top_k: 1,
+                include_tags: false,
             },
             &sessions,
         )
@@ -1106,6 +1345,7 @@ mod tests {
                 session_id: "remote".to_string(),
                 text: "query".to_string(),
                 top_k: 1,
+                include_tags: false,
             },
             &sessions,
         )
@@ -1140,6 +1380,45 @@ mod tests {
         server.join().unwrap();
         fs::remove_file(image_path).unwrap();
         fs::remove_file(database_path).unwrap();
+    }
+
+    #[test]
+    fn hybrid_search_promotes_an_image_linked_to_a_matching_tag() {
+        let mut store = TextVectorStore::open_in_memory("test-model", 2).unwrap();
+        store
+            .upsert(&TextVectorRecord {
+                document: TextDocumentRecord {
+                    namespace: "library".to_string(),
+                    kind: "tag".to_string(),
+                    document_id: "beach".to_string(),
+                    content: "beach".to_string(),
+                    updated_at: 0,
+                },
+                embedding: vec![1.0, 0.0],
+            })
+            .unwrap();
+        store
+            .replace_item_links("library", "tag", "image-with-tag", &["beach".to_string()])
+            .unwrap();
+        let hits = vec![
+            EmbeddingSearchHit {
+                item_id: "image-without-tag".to_string(),
+                name: String::new(),
+                source_uri: String::new(),
+                similarity: 0.9,
+            },
+            EmbeddingSearchHit {
+                item_id: "image-with-tag".to_string(),
+                name: String::new(),
+                source_uri: String::new(),
+                similarity: 0.8,
+            },
+        ];
+
+        let merged = merge_tag_hits(&store, "library", &[1.0, 0.0], hits, 2).unwrap();
+
+        assert_eq!(merged[0].item_id, "image-with-tag");
+        assert_eq!(merged.len(), 2);
     }
 
     fn test_path(suffix: &str) -> PathBuf {

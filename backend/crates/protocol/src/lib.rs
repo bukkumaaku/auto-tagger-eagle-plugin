@@ -113,6 +113,14 @@ pub struct EmbeddingImageInput {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct EmbeddingTagInput {
+    pub item_id: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EmbeddingIndexBatchRequest {
     pub session_id: String,
     pub images: Vec<EmbeddingImageInput>,
@@ -120,9 +128,22 @@ pub struct EmbeddingIndexBatchRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct EmbeddingIndexTagsRequest {
+    pub session_id: String,
+    pub items: Vec<EmbeddingTagInput>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EmbeddingPruneRequest {
     pub session_id: String,
     pub item_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmbeddingPruneTagsRequest {
+    pub session_id: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -144,6 +165,8 @@ pub struct EmbeddingSearchTextRequest {
     pub session_id: String,
     pub text: String,
     pub top_k: usize,
+    #[serde(default)]
+    pub include_tags: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -312,7 +335,9 @@ pub enum Command {
     ScanEmbeddingModels(ScanEmbeddingModelsRequest),
     EmbeddingLoad(EmbeddingLoadRequest),
     EmbeddingIndexBatch(EmbeddingIndexBatchRequest),
+    EmbeddingIndexTags(EmbeddingIndexTagsRequest),
     EmbeddingPrune(EmbeddingPruneRequest),
+    EmbeddingPruneTags(EmbeddingPruneTagsRequest),
     EmbeddingHealth(EmbeddingHealthRequest),
     EmbeddingStatus(EmbeddingStatusRequest),
     EmbeddingSearchText(EmbeddingSearchTextRequest),
@@ -445,6 +470,8 @@ pub struct EmbeddingLoadResult {
     pub session_id: String,
     pub model_key: String,
     pub indexed_count: u64,
+    pub tag_indexed_count: u64,
+    pub tag_link_count: u64,
     pub reused: bool,
 }
 
@@ -468,10 +495,37 @@ pub struct EmbeddingIndexBatchResult {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct EmbeddingTagFailure {
+    pub tag: String,
+    pub error: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmbeddingIndexTagsResult {
+    pub session_id: String,
+    pub indexed_tags: u64,
+    pub skipped_tags: u64,
+    pub total_tags: u64,
+    pub total_links: u64,
+    pub failures: Vec<EmbeddingTagFailure>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EmbeddingPruneResult {
     pub session_id: String,
     pub removed_count: u64,
     pub total_indexed: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmbeddingPruneTagsResult {
+    pub session_id: String,
+    pub removed_tags: u64,
+    pub total_tags: u64,
+    pub total_links: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -498,6 +552,8 @@ pub struct EmbeddingStatusResult {
     pub session_id: String,
     pub model_key: String,
     pub indexed_count: u64,
+    pub tag_indexed_count: u64,
+    pub tag_link_count: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -670,7 +726,9 @@ pub enum ResultPayload {
     ScanEmbeddingModels(ScanEmbeddingModelsResult),
     EmbeddingLoad(EmbeddingLoadResult),
     EmbeddingIndexBatch(EmbeddingIndexBatchResult),
+    EmbeddingIndexTags(EmbeddingIndexTagsResult),
     EmbeddingPrune(EmbeddingPruneResult),
+    EmbeddingPruneTags(EmbeddingPruneTagsResult),
     EmbeddingHealth(EmbeddingHealthResult),
     EmbeddingStatus(EmbeddingStatusResult),
     EmbeddingSearchText(EmbeddingSearchResult),

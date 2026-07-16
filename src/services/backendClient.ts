@@ -33,6 +33,9 @@ import {
     type EmbeddingProvider,
     type EmbeddingImageInput,
     type EmbeddingIndexBatchResult,
+    type EmbeddingTagInput,
+    type EmbeddingIndexTagsResult,
+    type EmbeddingPruneTagsResult,
     type EmbeddingHealthResult,
     type EmbeddingPruneResult,
     type EmbeddingLoadResult,
@@ -212,6 +215,17 @@ export class BackendClient {
         return this.request("embedding_index_batch", { sessionId, images });
     }
 
+    indexEmbeddingTags(
+        sessionId: string,
+        items: EmbeddingTagInput[],
+    ): Promise<EmbeddingIndexTagsResult> {
+        return this.request("embedding_index_tags", { sessionId, items });
+    }
+
+    pruneEmbeddingTags(sessionId: string): Promise<EmbeddingPruneTagsResult> {
+        return this.request("embedding_prune_tags", { sessionId });
+    }
+
     pruneEmbedding(
         sessionId: string,
         itemIds: string[],
@@ -234,11 +248,13 @@ export class BackendClient {
         sessionId: string,
         text: string,
         topK: number,
+        includeTags = false,
     ): Promise<EmbeddingSearchResult> {
         return this.request("embedding_search_text", {
             sessionId,
             text,
             topK,
+            includeTags,
         });
     }
 

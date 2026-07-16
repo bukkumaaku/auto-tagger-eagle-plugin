@@ -12,6 +12,7 @@
         NSelect,
         NSpace,
         NSpin,
+        NSwitch,
         NTabPane,
         NTabs,
         NTag,
@@ -25,6 +26,7 @@
         PauseOutline,
         PlayOutline,
         PulseOutline,
+        PricetagsOutline,
         SearchOutline,
         TrashOutline,
     } from "@vicons/ionicons5";
@@ -39,6 +41,7 @@
     import type {
         EmbeddingImageFailure,
         EmbeddingImageInput,
+        EmbeddingTagInput,
         EmbeddingHealthResult,
         EmbeddingModelInfo,
         EmbeddingSearchHit,
@@ -72,6 +75,8 @@
         width?: number;
         height?: number;
         isDeleted?: boolean;
+        tags?: string[];
+        annotation?: string;
     };
 
     type SearchDisplayItem = EmbeddingSearchHit & {
@@ -101,6 +106,13 @@
     const loadedSignature = ref("");
     const loadedModelKey = ref("");
     const indexedCount = ref(0);
+    const tagIndexedCount = ref(0);
+    const tagLinkCount = ref(0);
+    const isTagIndexing = ref(false);
+    const tagIndexStatus = ref("就绪");
+    const tagTotalItems = ref(0);
+    const tagProcessedItems = ref(0);
+    const tagIndexFailures = ref<string[]>([]);
 
     const isIndexing = ref(false);
     const pauseRequested = ref(false);
@@ -115,6 +127,7 @@
     let disposed = false;
 
     const searchMode = ref<"text" | "image">("text");
+    const includeTags = ref(false);
     const queryText = ref("");
     const isSearching = ref(false);
     const allSearchHits = ref<EmbeddingSearchHit[]>([]);
@@ -190,6 +203,16 @@
     const isSearchResultCapped = computed(
         () => indexedCount.value > MAX_SEARCH_RESULTS,
     );
+    const canIncludeTags = computed(
+        () => tagIndexedCount.value > 0 && tagLinkCount.value > 0,
+    );
+    const tagIndexPercentage = computed(() =>
+        tagTotalItems.value === 0
+            ? 0
+            : Number(
+                  ((tagProcessedItems.value / tagTotalItems.value) * 100).toFixed(2),
+              ),
+    );
 
     onMounted(async () => {
         try {
@@ -230,6 +253,9 @@
     });
     watch(batchFieldMax, (maximum) => {
         if (batchSize.value > maximum) batchSize.value = maximum;
+    });
+    watch(canIncludeTags, (enabled) => {
+        if (!enabled) includeTags.value = false;
     });
     watch(searchLoadSentinel, (sentinel) => {
         searchResultObserver?.disconnect();
@@ -385,6 +411,8 @@
                 model.provider === "gemini" ? model.dimension : 0,
             );
             indexedCount.value = result.indexedCount;
+            tagIndexedCount.value = result.tagIndexedCount;
+            tagLinkCount.value = result.tagLinkCount;
             loadedSignature.value = signature;
             loadedModelKey.value = model.modelKey;
         }
@@ -404,6 +432,8 @@
                     "width",
                     "height",
                     "isDeleted",
+                    "tags",
+                    "annotation",
                 ],
             });
         } catch {
@@ -432,7 +462,15 @@
         };
     }
 
+    function toTagInput(item: EagleImage): EmbeddingTagInput {
+        return {
+            itemId: item.id,
+            tags: Array.isArray(item.tags) ? item.tags : [],
+        };
+    }
+
     async function startIndexing() {
+        if (isTagIndexing.value) return;
         if (isIndexing.value) {
             if (isPaused.value) resumeIndexing();
             return;
@@ -529,6 +567,68 @@
         }
     }
 
+    async function startTagIndexing() {
+        if (isIndexing.value || isTagIndexing.value || isSearching.value) return;
+        if (backenAPI.is_processing) {
+            notification("另一个任务正在运行", "warning");
+            return;
+        }
+        const taskId = beginTask("embedding", "全局标签向量化");
+        if (!taskId) return;
+        isTagIndexing.value = true;
+        tagIndexFailures.value = [];
+        tagIndexStatus.value = "正在加载模型";
+        try {
+            await ensureSession();
+            const images = await getLibraryImages();
+            if (images.length === 0) throw new Error("没有找到可处理的图片");
+            tagTotalItems.value = images.length;
+            tagProcessedItems.value = 0;
+            const tagBatchSize = Math.max(20, batchSize.value * 4);
+            updateTask(taskId, {
+                detail: "正在向量化标签",
+                total: images.length,
+            });
+            for (let offset = 0; offset < images.length; offset += tagBatchSize) {
+                const batch = images.slice(offset, offset + tagBatchSize);
+                tagIndexStatus.value = `正在处理 ${offset + 1}-${Math.min(offset + batch.length, images.length)}`;
+                const result = await getBackendClient().indexEmbeddingTags(
+                    SESSION_ID,
+                    batch.map(toTagInput),
+                );
+                tagProcessedItems.value += batch.length;
+                tagIndexedCount.value = result.totalTags;
+                tagLinkCount.value = result.totalLinks;
+                tagIndexFailures.value.push(
+                    ...result.failures.map(
+                        (failure) => `${failure.tag}：${failure.error}`,
+                    ),
+                );
+                updateTask(taskId, {
+                    detail: tagIndexStatus.value,
+                    completed: tagProcessedItems.value,
+                });
+            }
+            const pruned = await getBackendClient().pruneEmbeddingTags(SESSION_ID);
+            tagIndexedCount.value = pruned.totalTags;
+            tagLinkCount.value = pruned.totalLinks;
+            tagIndexStatus.value = tagIndexFailures.value.length
+                ? "完成，部分标签失败"
+                : "标签索引完成";
+            completeTask(taskId, tagIndexStatus.value);
+            notification(
+                `已索引 ${tagIndexedCount.value} 个标签`,
+                tagIndexFailures.value.length ? "warning" : "success",
+            );
+        } catch (error) {
+            tagIndexStatus.value = "标签索引失败";
+            failTask(taskId, error);
+            notification(errorMessage(error), "error");
+        } finally {
+            isTagIndexing.value = false;
+        }
+    }
+
     function pauseIndexing() {
         pauseRequested.value = true;
         indexStatus.value = "当前批次完成后暂停";
@@ -619,7 +719,7 @@
     }
 
     async function runSearch() {
-        if (isIndexing.value || isSearching.value) return;
+        if (isIndexing.value || isTagIndexing.value || isSearching.value) return;
         if (backenAPI.is_processing) {
             notification("另一个任务正在运行", "warning");
             return;
@@ -647,6 +747,7 @@
                         SESSION_ID,
                         queryText.value,
                         resultCount,
+                        includeTags.value && canIncludeTags.value,
                     )
                 ).hits;
             } else {
@@ -866,6 +967,14 @@
             >
                 已索引 {{ indexedCount }} 张
             </n-tag>
+            <n-tag
+                v-if="loadedModelKey === selectedModel && tagIndexedCount > 0"
+                size="small"
+                :bordered="false"
+                type="success"
+            >
+                已索引 {{ tagIndexedCount }} 个标签
+            </n-tag>
         </header>
 
         <n-tabs v-model:value="activeTab" type="line" animated class="feature-tabs">
@@ -996,6 +1105,67 @@
                 </section>
             </n-tab-pane>
 
+            <n-tab-pane name="tag-index" tab="标签向量化">
+                <section class="index-panel">
+                    <div class="metrics-row">
+                        <div class="metric">
+                            <span>总图片</span>
+                            <strong>{{ tagTotalItems }}</strong>
+                        </div>
+                        <div class="metric metric--green">
+                            <span>已处理</span>
+                            <strong>{{ tagProcessedItems }}</strong>
+                        </div>
+                        <div class="metric">
+                            <span>标签数量</span>
+                            <strong>{{ tagIndexedCount }}</strong>
+                        </div>
+                        <div class="metric metric--red">
+                            <span>失败</span>
+                            <strong>{{ tagIndexFailures.length }}</strong>
+                        </div>
+                    </div>
+                    <div class="progress-block">
+                        <div class="progress-heading">
+                            <span>{{ tagIndexStatus }}</span>
+                            <span>{{ tagProcessedItems }}/{{ tagTotalItems }}</span>
+                        </div>
+                        <n-progress
+                            type="line"
+                            :percentage="tagIndexPercentage"
+                            :processing="isTagIndexing"
+                            indicator-placement="inside"
+                        />
+                    </div>
+                    <div class="index-actions">
+                        <span class="field-label">
+                            已建立 {{ tagLinkCount }} 条图片-标签关系
+                        </span>
+                        <n-button
+                            type="primary"
+                            :loading="isTagIndexing"
+                            :disabled="!selectedModel || isIndexing || isSearching"
+                            @click="startTagIndexing"
+                        >
+                            <template #icon>
+                                <n-icon><PricetagsOutline /></n-icon>
+                            </template>
+                            {{ isTagIndexing ? "正在向量化" : "开始标签向量化" }}
+                        </n-button>
+                    </div>
+                    <n-alert
+                        v-if="tagIndexFailures.length"
+                        title="未能处理的标签"
+                        type="warning"
+                        class="failure-alert"
+                    >
+                        <div v-for="failure in tagIndexFailures.slice(0, 8)" :key="failure">
+                            {{ failure }}
+                        </div>
+                    </n-alert>
+                </section>
+            </n-tab-pane>
+
             <n-tab-pane name="search" tab="相似图片搜索">
                 <section class="search-panel">
                     <div class="search-toolbar">
@@ -1004,11 +1174,27 @@
                         />
                         <n-radio-group
                             v-model:value="searchMode"
-                            :disabled="isSearching || isIndexing"
+                            :disabled="isSearching || isIndexing || isTagIndexing"
                         >
                             <n-radio-button value="text">文字</n-radio-button>
                             <n-radio-button value="image">当前图片</n-radio-button>
                         </n-radio-group>
+                        <n-switch
+                            v-model:value="includeTags"
+                            :disabled="
+                                isSearching ||
+                                isIndexing ||
+                                isTagIndexing ||
+                                searchMode !== 'text' ||
+                                !canIncludeTags
+                            "
+                        >
+                            <template #checked>标签融合</template>
+                            <template #unchecked>仅图片</template>
+                        </n-switch>
+                        <span v-if="!canIncludeTags" class="field-label">
+                            完成标签向量化后可开启
+                        </span>
                         <FormHelp
                             v-if="searchMode === 'text'"
                             :content="t('semantic_search.query_desc')"
@@ -1018,7 +1204,7 @@
                             v-model:value="queryText"
                             clearable
                             placeholder="输入要搜索的画面或概念"
-                            :disabled="isSearching || isIndexing"
+                            :disabled="isSearching || isIndexing || isTagIndexing"
                             @keyup.enter="runSearch"
                         />
                         <div v-else class="selected-image-mode">
@@ -1028,7 +1214,7 @@
                         <n-button
                             type="primary"
                             :loading="isSearching"
-                            :disabled="!selectedModel || isIndexing"
+                            :disabled="!selectedModel || isIndexing || isTagIndexing"
                             @click="runSearch"
                         >
                             <template #icon>
