@@ -1,0 +1,12 @@
+[package]
+name = "text-vector-store"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rusqlite.workspace = true
+sqlite-vec.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+vector-store.workspace = true

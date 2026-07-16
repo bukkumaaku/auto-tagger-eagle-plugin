@@ -27,6 +27,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlite-vec = "=0.1.9"
 thiserror = "2"
+text-vector-store = { path = "crates/text-vector-store" }
 tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"] }
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "time"] }
 clip-embedding = { path = "crates/clip-embedding" }

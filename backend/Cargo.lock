@@ -2052,6 +2052,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "text-vector-store"
+version = "2.0.1"
+dependencies = [
+ "rusqlite",
+ "sqlite-vec",
+ "thiserror",
+ "vector-store",
+]
+
+[[package]]
 name = "thiserror"
 version = "2.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
