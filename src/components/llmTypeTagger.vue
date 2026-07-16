@@ -47,8 +47,14 @@
         recordFailure,
         updateTask,
     } from "../services/taskCenter";
-    import downloadModal from "./downloadModal.vue";
-    import FormHelp from "./formHelp.vue";
+import downloadModal from "./downloadModal.vue";
+import FormHelp from "./formHelp.vue";
+import {
+    createTaggerBackup,
+    listTaggerBackups,
+    restoreTaggerBackup,
+    type TaggerBackupOption,
+} from "../services/taggerBackup";
 
     type PromptMode = "tag" | "annotation";
     type OverwriteMode = "nocover" | "cover" | "merge";
@@ -96,6 +102,9 @@
     const modelOptions: Ref<ModelOption[]> = ref([]);
     let loadedModel = "";
     let saveTimer: ReturnType<typeof setTimeout> | undefined;
+    const backups = ref<TaggerBackupOption[]>([]);
+    const selectedBackup = ref("");
+    const isRestoring = ref(false);
 
     const normalizeOverwriteMode = (value: string): OverwriteMode =>
         value === "nocover" || value === "cover" || value === "merge"
@@ -150,6 +159,7 @@
             overwrite: normalizeOverwriteMode(config.llmOverwrite),
         };
         await refreshInstalledModels(configuredModel);
+        await refreshBackups();
         isReady.value = true;
         if (formData.value.model !== configuredModel) {
             await persistForm();
@@ -195,6 +205,7 @@
             if (loadedModel && loadedModel !== model) {
                 void unloadSession();
             }
+            if (isReady.value) void refreshBackups();
         },
     );
 
@@ -261,6 +272,35 @@
             modelPath: modelFile.path,
             mmprojPath: mmprojFile.path,
         };
+    };
+
+    const refreshBackups = async () => {
+        try {
+            const paths = await resolveRuntimePaths();
+            backups.value = listTaggerBackups(paths.modelPath);
+            if (!backups.value.some((backup) => backup.value === selectedBackup.value)) {
+                selectedBackup.value = backups.value[0]?.value || "";
+            }
+        } catch {
+            backups.value = [];
+            selectedBackup.value = "";
+        }
+    };
+
+    const restoreSelectedBackup = async () => {
+        if (!selectedBackup.value || isProcessing.value || backenAPI.is_processing) return;
+        isRestoring.value = true;
+        try {
+            const result = await restoreTaggerBackup(
+                selectedBackup.value,
+                (id) => eagle.item.getById(id),
+            );
+            notification(`已恢复 ${result.restored} 项，跳过 ${result.skipped} 项`, "success");
+        } catch (error) {
+            notification(error instanceof Error ? error.message : String(error), "error");
+        } finally {
+            isRestoring.value = false;
+        }
     };
 
     const ensureSession = async (backend: BackendClient) => {
@@ -404,6 +444,11 @@
                 promptRunnerDownload();
                 return;
             }
+            createTaggerBackup(
+                runtimePaths.modelPath,
+                mode === "tag" ? "llm-tag" : "llm-annotation",
+                items,
+            );
         } catch (error) {
             notification(
                 error instanceof Error ? error.message : String(error),
@@ -578,6 +623,25 @@
                         {{ t("index.model_download_window") }}
                     </n-button>
                 </div>
+            </n-form-item>
+
+            <n-form-item label="标签与注释备份">
+                <n-select
+                    v-model:value="selectedBackup"
+                    :options="backups"
+                    clearable
+                    placeholder="选择要恢复的备份"
+                    :disabled="isProcessing || isRestoring || backups.length === 0"
+                />
+                <n-button
+                    secondary
+                    :loading="isRestoring"
+                    :disabled="!selectedBackup || isProcessing"
+                    style="margin-left: 10px"
+                    @click="restoreSelectedBackup"
+                >
+                    恢复备份
+                </n-button>
             </n-form-item>
 
             <n-form-item :label="t('llm_tagger.prompt')">

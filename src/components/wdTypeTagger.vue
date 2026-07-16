@@ -24,8 +24,14 @@
         config,
     } from "../api/backen";
     import downloadModal from "./downloadModal.vue";
-    import FormHelp from "./formHelp.vue";
-    import { getBackendClient } from "../services/backendClient";
+import FormHelp from "./formHelp.vue";
+import { getBackendClient } from "../services/backendClient";
+import {
+    createTaggerBackup,
+    listTaggerBackups,
+    restoreTaggerBackup,
+    type TaggerBackupOption,
+} from "../services/taggerBackup";
     import {
         beginTask,
         completeTask,
@@ -166,6 +172,9 @@
             formData2Config();
             await backenAPI.setConfig();
             const items = await backenAPI.initialize(isAll);
+            const model = await resolveSelectedModel();
+            if (!model) throw new Error("无法定位当前 WD 模型目录，已取消打标");
+            createTaggerBackup(model.modelPath, "wd", items);
             allItem.value = items.length;
             completeItem.value = 0;
             updateTask(startedTask, {
@@ -222,6 +231,51 @@
         }
     });
     const showModal = ref(false);
+    const backups = ref<TaggerBackupOption[]>([]);
+    const selectedBackup = ref("");
+    const isRestoring = ref(false);
+
+    const resolveSelectedModel = async () => {
+        if (!config.modelLocation || !formData.value.modelPath) return null;
+        const result = await getBackendClient().scanWdModels(config.modelLocation);
+        return result.models.find(
+            (model) => model.name === formData.value.modelPath,
+        ) || null;
+    };
+
+    const refreshBackups = async () => {
+        try {
+            const model = await resolveSelectedModel();
+            backups.value = model ? listTaggerBackups(model.modelPath) : [];
+            if (!backups.value.some((backup) => backup.value === selectedBackup.value)) {
+                selectedBackup.value = backups.value[0]?.value || "";
+            }
+        } catch {
+            backups.value = [];
+            selectedBackup.value = "";
+        }
+    };
+
+    const restoreSelectedBackup = async () => {
+        if (!selectedBackup.value || isTagging.value || backenAPI.is_processing) return;
+        isRestoring.value = true;
+        try {
+            const result = await restoreTaggerBackup(
+                selectedBackup.value,
+                (id) => eagle.item.getById(id),
+            );
+            notification(`已恢复 ${result.restored} 项，跳过 ${result.skipped} 项`, "success");
+        } catch (error) {
+            notification(error instanceof Error ? error.message : String(error), "error");
+        } finally {
+            isRestoring.value = false;
+        }
+    };
+
+    watch(
+        () => formData.value.modelPath,
+        () => void refreshBackups(),
+    );
 </script>
 
 <template>
@@ -278,6 +332,9 @@
                 :max="1"
                 :step="0.01"
             />
+            <small style="margin-left: 10px; color: #8f969d">
+                WD 类模型建议 0.35，CL、CA 类模型建议 0.75
+            </small>
         </n-form-item>
         <n-form-item :label="t('index.batch_size')" path="steps">
             <FormHelp :content="t('index.batch_size_desc')" html />
@@ -342,6 +399,25 @@
                 "
                 :disabled="formData.language !== 'mix'"
             />
+        </n-form-item>
+        <n-form-item label="标签与注释备份">
+            <n-select
+                v-model:value="selectedBackup"
+                :options="backups"
+                clearable
+                placeholder="选择要恢复的备份"
+                style="width: 70%"
+                :disabled="isTagging || isRestoring || backups.length === 0"
+            />
+            <n-button
+                secondary
+                :loading="isRestoring"
+                :disabled="!selectedBackup || isTagging"
+                style="margin-left: 10px"
+                @click="restoreSelectedBackup"
+            >
+                恢复备份
+            </n-button>
         </n-form-item>
         <div style="display: flex; flex-direction: column; gap: 10px">
             <div style="display: flex; gap: 10px; justify-content: flex-end">
