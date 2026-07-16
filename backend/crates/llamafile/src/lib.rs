@@ -223,20 +223,7 @@ impl LlamafileSession {
         let mime_type = image_mime_type(&image)
             .ok_or_else(|| LlamafileError::UnsupportedImage(request.image_path.clone()))?;
         let data_url = format!("data:{mime_type};base64,{}", BASE64.encode(image));
-        let payload = json!({
-            "model": request.model,
-            "messages": [{
-                "role": "user",
-                "content": [
-                    { "type": "text", "text": request.prompt },
-                    { "type": "image_url", "image_url": { "url": data_url } }
-                ]
-            }],
-            "temperature": request.temperature,
-            "max_tokens": request.max_tokens,
-            "repetition_penalty": request.repetition_penalty,
-            "stop": request.stop,
-        });
+        let payload = completion_payload(&request, data_url);
 
         let response = self
             .client
@@ -333,6 +320,24 @@ impl LlamafileSession {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+fn completion_payload(request: &ImageRequest, data_url: String) -> serde_json::Value {
+    json!({
+        "model": request.model,
+        "messages": [{
+            "role": "user",
+            "content": [
+                { "type": "text", "text": request.prompt },
+                { "type": "image_url", "image_url": { "url": data_url } }
+            ]
+        }],
+        "temperature": request.temperature,
+        "max_tokens": request.max_tokens,
+        "repetition_penalty": request.repetition_penalty,
+        "chat_template_kwargs": { "enable_thinking": false },
+        "stop": request.stop,
+    })
 }
 
 impl Drop for LlamafileSession {
@@ -495,5 +500,13 @@ mod tests {
         assert_eq!(request.max_tokens, 1024);
         assert_eq!(request.temperature, 0.5);
         assert!(!request.stop.is_empty());
+    }
+
+    #[test]
+    fn image_request_disables_thinking_mode() {
+        let request = ImageRequest::new("image.png", "describe it");
+        let payload = completion_payload(&request, "data:image/png;base64,test".to_string());
+
+        assert_eq!(payload["chat_template_kwargs"]["enable_thinking"], false);
     }
 }

@@ -91,6 +91,7 @@
     const completedItems = ref(0);
     const totalItems = ref(0);
     const showDownload = ref(false);
+    const showRunnerDownload = ref(false);
     const downloadableModels = llmModelInfo.filter((item) => !item.runnerOnly);
     const modelOptions: Ref<ModelOption[]> = ref([]);
     let loadedModel = "";
@@ -278,6 +279,25 @@
         loadedModel = formData.value.model;
     };
 
+    const promptRunnerDownload = () => {
+        dialog.warning({
+            title: t.value("llm_tagger.llamafile_missing_title"),
+            content: t.value("llm_tagger.llamafile_missing_notice"),
+            positiveText: t.value("llm_tagger.download_llamafile"),
+            negativeText: t.value("update.later"),
+            onPositiveClick: () => {
+                showRunnerDownload.value = true;
+            },
+        });
+    };
+
+    const handleRunnerDownloaded = async (paths: string[]) => {
+        if (!paths[0]) return;
+        config.llmRunnerPath = paths[0];
+        await backenAPI.setConfig();
+        notification(t.value("settings.llamafile_downloaded"));
+    };
+
     async function unloadSession() {
         if (!loadedModel) return;
         loadedModel = "";
@@ -376,6 +396,22 @@
             return;
         }
 
+        const backend = getBackendClient();
+        try {
+            const runtimePaths = await resolveRuntimePaths();
+            const runnerInfo = await backend.pathInfo(runtimePaths.llamafilePath);
+            if (!runnerInfo.isFile) {
+                promptRunnerDownload();
+                return;
+            }
+        } catch (error) {
+            notification(
+                error instanceof Error ? error.message : String(error),
+                "error",
+            );
+            return;
+        }
+
         if (saveTimer) clearTimeout(saveTimer);
         saveTimer = undefined;
         await persistForm();
@@ -394,7 +430,6 @@
 
         try {
             await nextTick();
-            const backend = getBackendClient();
             backend.start();
             processingStage.value = "loading_model";
             updateTask(taskId, { detail: "正在加载模型" });
@@ -639,6 +674,13 @@
         :initial-selection="formData.model"
         :reload-on-complete="false"
         @completed="refreshInstalledModels(formData.model)"
+    />
+    <downloadModal
+        v-model:showModal="showRunnerDownload"
+        model-type="llm"
+        runner-only
+        :reload-on-complete="false"
+        @completed="handleRunnerDownloaded"
     />
 </template>
 
