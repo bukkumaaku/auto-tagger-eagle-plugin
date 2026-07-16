@@ -48,6 +48,26 @@ pub struct PathInfoRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BackupWriteRequest {
+    pub directory: String,
+    pub filename: String,
+    pub content: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupListRequest {
+    pub directory: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupReadRequest {
+    pub path: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ScanWdModelsRequest {
     pub root: String,
 }
@@ -341,6 +361,9 @@ pub enum Command {
     ReadConfig(ReadConfigRequest),
     WriteConfig(WriteConfigRequest),
     PathInfo(PathInfoRequest),
+    BackupWrite(BackupWriteRequest),
+    BackupList(BackupListRequest),
+    BackupRead(BackupReadRequest),
     ScanWdModels(ScanWdModelsRequest),
     ScanEmbeddingModels(ScanEmbeddingModelsRequest),
     EmbeddingLoad(EmbeddingLoadRequest),
@@ -484,6 +507,33 @@ pub struct EmbeddingLoadResult {
     pub tag_indexed_count: u64,
     pub tag_link_count: u64,
     pub reused: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupWriteResult {
+    pub path: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupFileEntry {
+    pub name: String,
+    pub path: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupListResult {
+    pub directory: String,
+    pub entries: Vec<BackupFileEntry>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupReadResult {
+    pub path: String,
+    pub content: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -734,6 +784,9 @@ pub enum ResultPayload {
     ReadConfig(ReadConfigResult),
     WriteConfig(WriteConfigResult),
     PathInfo(PathInfoResult),
+    BackupWrite(BackupWriteResult),
+    BackupList(BackupListResult),
+    BackupRead(BackupReadResult),
     ScanWdModels(ScanWdModelsResult),
     ScanEmbeddingModels(ScanEmbeddingModelsResult),
     EmbeddingLoad(EmbeddingLoadResult),

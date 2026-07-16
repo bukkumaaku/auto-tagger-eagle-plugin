@@ -1,4 +1,5 @@
 pub mod aaa;
+pub mod backup;
 pub mod check_update;
 pub mod config;
 pub mod download_file;
@@ -88,6 +89,9 @@ impl CommandHandler for BuiltinHandlers {
             Command::ReadConfig(_) => config::read().map(ResultPayload::ReadConfig),
             Command::WriteConfig(request) => config::write(request).map(ResultPayload::WriteConfig),
             Command::PathInfo(request) => path_info::handle(request).map(ResultPayload::PathInfo),
+            Command::BackupWrite(request) => backup::write(request).map(ResultPayload::BackupWrite),
+            Command::BackupList(request) => backup::list(request).map(ResultPayload::BackupList),
+            Command::BackupRead(request) => backup::read(request).map(ResultPayload::BackupRead),
             Command::ScanWdModels(request) => {
                 scan_wd_models::handle(request).map(ResultPayload::ScanWdModels)
             }

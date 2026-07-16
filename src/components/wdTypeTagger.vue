@@ -174,7 +174,7 @@ import {
             const items = await backenAPI.initialize(isAll);
             const model = await resolveSelectedModel();
             if (!model) throw new Error("无法定位当前 WD 模型目录，已取消打标");
-            createTaggerBackup(model.modelPath, "wd", items);
+            await createTaggerBackup(model.modelPath, "wd", items);
             await refreshBackups();
             allItem.value = items.length;
             completeItem.value = 0;
@@ -247,7 +247,7 @@ import {
     const refreshBackups = async () => {
         try {
             const model = await resolveSelectedModel();
-            backups.value = model ? listTaggerBackups(model.modelPath) : [];
+            backups.value = model ? await listTaggerBackups(model.modelPath) : [];
             if (!backups.value.some((backup) => backup.value === selectedBackup.value)) {
                 selectedBackup.value = backups.value[0]?.value || "";
             }

@@ -9,6 +9,9 @@ import {
     type EchoResult,
     type ReadConfigResult,
     type PathInfoResult,
+    type BackupListResult,
+    type BackupReadResult,
+    type BackupWriteResult,
     type ScanWdModelsResult,
     type ProgressPayload,
     PROTOCOL_VERSION,
@@ -165,6 +168,18 @@ export class BackendClient {
 
     pathInfo(path: string): Promise<PathInfoResult> {
         return this.request("path_info", { path });
+    }
+
+    writeBackup(directory: string, filename: string, content: string): Promise<BackupWriteResult> {
+        return this.request("backup_write", { directory, filename, content });
+    }
+
+    listBackups(directory: string): Promise<BackupListResult> {
+        return this.request("backup_list", { directory });
+    }
+
+    readBackup(path: string): Promise<BackupReadResult> {
+        return this.request("backup_read", { path });
     }
 
     scanWdModels(root: string): Promise<ScanWdModelsResult> {

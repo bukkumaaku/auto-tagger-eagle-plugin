@@ -58,6 +58,20 @@ export type PathInfoRequest = {
     path: string;
 };
 
+export type BackupWriteRequest = {
+    directory: string;
+    filename: string;
+    content: string;
+};
+
+export type BackupListRequest = {
+    directory: string;
+};
+
+export type BackupReadRequest = {
+    path: string;
+};
+
 export type ScanWdModelsRequest = {
     root: string;
 };
@@ -230,6 +244,9 @@ export type CommandPayloadMap = {
     read_config: ReadConfigRequest;
     write_config: WriteConfigRequest;
     path_info: PathInfoRequest;
+    backup_write: BackupWriteRequest;
+    backup_list: BackupListRequest;
+    backup_read: BackupReadRequest;
     scan_wd_models: ScanWdModelsRequest;
     scan_embedding_models: ScanEmbeddingModelsRequest;
     embedding_load: EmbeddingLoadRequest;
@@ -339,6 +356,11 @@ export type EmbeddingLoadResult = {
     tagLinkCount: number;
     reused: boolean;
 };
+
+export type BackupWriteResult = { path: string };
+export type BackupFileEntry = { name: string; path: string };
+export type BackupListResult = { directory: string; entries: BackupFileEntry[] };
+export type BackupReadResult = { path: string; content: string };
 
 export type EmbeddingImageFailure = {
     id: string;
@@ -499,6 +521,9 @@ export type ResultDataMap = {
     read_config: ReadConfigResult;
     write_config: WriteConfigResult;
     path_info: PathInfoResult;
+    backup_write: BackupWriteResult;
+    backup_list: BackupListResult;
+    backup_read: BackupReadResult;
     scan_wd_models: ScanWdModelsResult;
     scan_embedding_models: ScanEmbeddingModelsResult;
     embedding_load: EmbeddingLoadResult;

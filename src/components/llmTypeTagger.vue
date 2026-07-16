@@ -277,7 +277,7 @@ import {
     const refreshBackups = async () => {
         try {
             const paths = await resolveRuntimePaths();
-            backups.value = listTaggerBackups(paths.modelPath);
+            backups.value = await listTaggerBackups(paths.modelPath);
             if (!backups.value.some((backup) => backup.value === selectedBackup.value)) {
                 selectedBackup.value = backups.value[0]?.value || "";
             }
@@ -444,7 +444,7 @@ import {
                 promptRunnerDownload();
                 return;
             }
-            createTaggerBackup(
+            await createTaggerBackup(
                 runtimePaths.modelPath,
                 mode === "tag" ? "llm-tag" : "llm-annotation",
                 items,
