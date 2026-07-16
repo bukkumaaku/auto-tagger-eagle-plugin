@@ -245,8 +245,16 @@ export class BackendClient {
         return this.request("embedding_health", { sessionId, itemIds });
     }
 
-    embeddingStatus(sessionId: string): Promise<EmbeddingStatusResult> {
-        return this.request("embedding_status", { sessionId });
+    embeddingStatus(
+        sessionId: string,
+        options: {
+            databasePath?: string;
+            namespace?: string;
+            modelKey?: string;
+            dimension?: number;
+        } = {},
+    ): Promise<EmbeddingStatusResult> {
+        return this.request("embedding_status", { sessionId, ...options });
     }
 
     searchEmbeddingText(

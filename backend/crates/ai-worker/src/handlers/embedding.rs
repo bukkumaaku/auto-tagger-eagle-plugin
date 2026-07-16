@@ -496,14 +496,55 @@ pub fn status(
     sessions: &SessionManager,
 ) -> HandlerResult<EmbeddingStatusResult> {
     validate_session_id(&request.session_id)?;
-    let handle = embedding_session(sessions, &request.session_id)?;
-    let session = handle.lock().map_err(session_error)?;
+    let key = session_key(&request.session_id);
+    if let Some(handle) = sessions
+        .get::<EmbeddingSession>(&key)
+        .map_err(session_error)?
+    {
+        let session = handle.lock().map_err(session_error)?;
+        return Ok(EmbeddingStatusResult {
+            session_id: request.session_id,
+            model_key: session.settings.model_key.clone(),
+            indexed_count: indexed_count(&session)?,
+            tag_indexed_count: tag_indexed_count(&session)?,
+            tag_link_count: tag_link_count(&session)?,
+        });
+    }
+
+    if request.database_path.trim().is_empty()
+        || request.namespace.trim().is_empty()
+        || request.model_key.trim().is_empty()
+        || request.dimension == 0
+    {
+        return Err(HandlerError::new(
+            "EMBEDDING_SESSION_NOT_FOUND",
+            format!("session `{}` is not loaded", request.session_id),
+        ));
+    }
+    let store = VectorStore::open(
+        &request.database_path,
+        &request.model_key,
+        request.dimension,
+    )
+    .map_err(store_error)?;
+    let text_store = TextVectorStore::open(
+        &request.database_path,
+        &request.model_key,
+        request.dimension,
+    )
+    .map_err(store_error)?;
     Ok(EmbeddingStatusResult {
         session_id: request.session_id,
-        model_key: session.settings.model_key.clone(),
-        indexed_count: indexed_count(&session)?,
-        tag_indexed_count: tag_indexed_count(&session)?,
-        tag_link_count: tag_link_count(&session)?,
+        model_key: request.model_key,
+        indexed_count: store
+            .count_modality(&request.namespace, Modality::Image)
+            .map_err(store_error)?,
+        tag_indexed_count: text_store
+            .count_embeddings(&request.namespace, "tag")
+            .map_err(store_error)?,
+        tag_link_count: text_store
+            .count_links(&request.namespace, "tag")
+            .map_err(store_error)?,
     })
 }
 

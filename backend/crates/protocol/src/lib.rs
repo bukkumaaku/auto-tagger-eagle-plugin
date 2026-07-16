@@ -159,6 +159,14 @@ pub struct EmbeddingHealthRequest {
 #[serde(rename_all = "camelCase")]
 pub struct EmbeddingStatusRequest {
     pub session_id: String,
+    #[serde(default)]
+    pub database_path: String,
+    #[serde(default)]
+    pub namespace: String,
+    #[serde(default)]
+    pub model_key: String,
+    #[serde(default)]
+    pub dimension: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
