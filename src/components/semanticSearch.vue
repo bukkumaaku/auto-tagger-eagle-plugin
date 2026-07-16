@@ -729,14 +729,25 @@
         negativeHits: EmbeddingSearchHit[],
     ): EmbeddingSearchHit[] {
         if (negativeHits.length === 0) return hits;
-        const peak = negativeHits[0]?.similarity || 0;
-        const cutoff = Math.max(0.25, peak * 0.85);
-        const excluded = new Set(
-            negativeHits
-                .filter((hit) => hit.similarity >= cutoff)
-                .map((hit) => hit.itemId),
+        const negativeScores = new Map(
+            negativeHits.map((hit) => [hit.itemId, hit.similarity]),
         );
-        return hits.filter((hit) => !excluded.has(hit.itemId));
+        const peak = negativeHits[0]?.similarity || 0;
+        const cutoff = Math.max(0.55, peak * 0.8);
+        const penaltyWeight = 0.65;
+        return hits
+            .filter((hit) => (negativeScores.get(hit.itemId) || 0) < cutoff)
+            .map((hit) => {
+                const negativeScore = negativeScores.get(hit.itemId) || 0;
+                return {
+                    ...hit,
+                    similarity: Math.max(
+                        0,
+                        hit.similarity - negativeScore * penaltyWeight,
+                    ),
+                };
+            })
+            .sort((left, right) => right.similarity - left.similarity);
     }
 
     async function checkIndexHealth() {
