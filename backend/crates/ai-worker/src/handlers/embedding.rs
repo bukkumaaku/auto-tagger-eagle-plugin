@@ -127,6 +127,7 @@ pub fn load(
             session_id: request.session_id,
             model_key: session.settings.model_key.clone(),
             indexed_count: indexed_count(&session)?,
+            tag_document_count: tag_document_count(&session)?,
             tag_indexed_count: tag_indexed_count(&session)?,
             tag_link_count: tag_link_count(&session)?,
             reused: true,
@@ -141,6 +142,7 @@ pub fn load(
         session_id: request.session_id,
         model_key: session.settings.model_key.clone(),
         indexed_count: indexed_count(&session)?,
+        tag_document_count: tag_document_count(&session)?,
         tag_indexed_count: tag_indexed_count(&session)?,
         tag_link_count: tag_link_count(&session)?,
         reused: false,
@@ -506,6 +508,7 @@ pub fn status(
             session_id: request.session_id,
             model_key: session.settings.model_key.clone(),
             indexed_count: indexed_count(&session)?,
+            tag_document_count: tag_document_count(&session)?,
             tag_indexed_count: tag_indexed_count(&session)?,
             tag_link_count: tag_link_count(&session)?,
         });
@@ -538,6 +541,9 @@ pub fn status(
         model_key: request.model_key,
         indexed_count: store
             .count_modality(&request.namespace, Modality::Image)
+            .map_err(store_error)?,
+        tag_document_count: text_store
+            .count_documents(&request.namespace, "tag")
             .map_err(store_error)?,
         tag_indexed_count: text_store
             .count_embeddings(&request.namespace, "tag")
@@ -1035,6 +1041,13 @@ fn indexed_count(session: &EmbeddingSession) -> HandlerResult<u64> {
     session
         .store
         .count_modality(&session.settings.namespace, Modality::Image)
+        .map_err(store_error)
+}
+
+fn tag_document_count(session: &EmbeddingSession) -> HandlerResult<u64> {
+    session
+        .text_store
+        .count_documents(&session.settings.namespace, "tag")
         .map_err(store_error)
 }
 
