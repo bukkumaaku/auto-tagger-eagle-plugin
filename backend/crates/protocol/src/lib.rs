@@ -131,6 +131,8 @@ pub struct EmbeddingIndexBatchRequest {
 pub struct EmbeddingIndexTagsRequest {
     pub session_id: String,
     pub items: Vec<EmbeddingTagInput>,
+    #[serde(default)]
+    pub concurrency: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -129,6 +129,7 @@
     const searchMode = ref<"text" | "image">("text");
     const includeTags = ref(false);
     const queryText = ref("");
+    const negativeQueryText = ref("");
     const isSearching = ref(false);
     const allSearchHits = ref<EmbeddingSearchHit[]>([]);
     const searchResults = ref<SearchDisplayItem[]>([]);
@@ -595,6 +596,7 @@
                 const result = await getBackendClient().indexEmbeddingTags(
                     SESSION_ID,
                     batch.map(toTagInput),
+                    batchSize.value,
                 );
                 tagProcessedItems.value += batch.length;
                 tagIndexedCount.value = result.totalTags;
@@ -650,6 +652,21 @@
                 status: "running",
             });
         }
+    }
+
+    function filterNegativeHits(
+        hits: EmbeddingSearchHit[],
+        negativeHits: EmbeddingSearchHit[],
+    ): EmbeddingSearchHit[] {
+        if (negativeHits.length === 0) return hits;
+        const peak = negativeHits[0]?.similarity || 0;
+        const cutoff = Math.max(0.25, peak * 0.85);
+        const excluded = new Set(
+            negativeHits
+                .filter((hit) => hit.similarity >= cutoff)
+                .map((hit) => hit.itemId),
+        );
+        return hits.filter((hit) => !excluded.has(hit.itemId));
     }
 
     async function checkIndexHealth() {
@@ -774,6 +791,17 @@
                         resultCount,
                     )
                 ).hits;
+            }
+            if (negativeQueryText.value.trim()) {
+                const negativeHits = (
+                    await backend.searchEmbeddingText(
+                        SESSION_ID,
+                        negativeQueryText.value,
+                        resultCount,
+                        includeTags.value && canIncludeTags.value,
+                    )
+                ).hits;
+                hits = filterNegativeHits(hits, negativeHits);
             }
             if (generation !== searchGeneration) return;
             allSearchHits.value = [...hits].sort(
@@ -1138,9 +1166,25 @@
                         />
                     </div>
                     <div class="index-actions">
-                        <span class="field-label">
-                            已建立 {{ tagLinkCount }} 条图片-标签关系
-                        </span>
+                        <div class="batch-field">
+                            <span class="field-label">{{ batchFieldLabel }}</span>
+                            <FormHelp
+                                :content="
+                                    t(
+                                        isRemoteModel
+                                            ? 'semantic_search.concurrency_desc'
+                                            : 'semantic_search.batch_size_desc',
+                                    )
+                                "
+                            />
+                            <n-input-number
+                                v-model:value="batchSize"
+                                :min="1"
+                                :max="batchFieldMax"
+                                :disabled="isTagIndexing"
+                            />
+                        </div>
+                        <span class="field-label">已建立 {{ tagLinkCount }} 条图片-标签关系</span>
                         <n-button
                             type="primary"
                             :loading="isTagIndexing"
@@ -1204,6 +1248,13 @@
                             v-model:value="queryText"
                             clearable
                             placeholder="输入要搜索的画面或概念"
+                            :disabled="isSearching || isIndexing || isTagIndexing"
+                            @keyup.enter="runSearch"
+                        />
+                        <n-input
+                            v-model:value="negativeQueryText"
+                            clearable
+                            placeholder="负面搜索：排除的内容"
                             :disabled="isSearching || isIndexing || isTagIndexing"
                             @keyup.enter="runSearch"
                         />

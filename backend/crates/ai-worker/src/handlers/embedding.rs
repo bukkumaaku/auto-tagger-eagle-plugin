@@ -324,6 +324,7 @@ pub fn index_tags(
                 .iter()
                 .map(|item| item.content.clone())
                 .collect::<Vec<_>>(),
+            request.concurrency,
         ),
     ) {
         match result {
@@ -705,20 +706,27 @@ impl EmbeddingEngine {
         }
     }
 
-    fn embed_texts(&mut self, texts: &[String]) -> Vec<Result<Vec<f32>, String>> {
+    fn embed_texts(
+        &mut self,
+        texts: &[String],
+        requested_concurrency: usize,
+    ) -> Vec<Result<Vec<f32>, String>> {
+        let requested_concurrency = requested_concurrency.max(1);
         match self {
             Self::Local(clip) => texts
                 .iter()
                 .map(|text| clip.embed_text(text).map_err(|error| error.to_string()))
                 .collect(),
-            Self::OpenAi(remote) => parallel_map(texts, OPENAI_IMAGE_CONCURRENCY_LIMIT, |text| {
-                remote.embed_text(text)
-            }),
-            Self::Gemini(remote) => {
-                parallel_map(texts, GEMINI_IMAGE_REQUEST_CONCURRENCY_LIMIT, |text| {
-                    remote.embed_text(text)
-                })
-            }
+            Self::OpenAi(remote) => parallel_map(
+                texts,
+                requested_concurrency.min(OPENAI_IMAGE_CONCURRENCY_LIMIT),
+                |text| remote.embed_text(text),
+            ),
+            Self::Gemini(remote) => parallel_map(
+                texts,
+                requested_concurrency.min(GEMINI_IMAGE_REQUEST_CONCURRENCY_LIMIT),
+                |text| remote.embed_text(text),
+            ),
         }
     }
 

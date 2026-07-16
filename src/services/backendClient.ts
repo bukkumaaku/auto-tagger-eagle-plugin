@@ -218,8 +218,13 @@ export class BackendClient {
     indexEmbeddingTags(
         sessionId: string,
         items: EmbeddingTagInput[],
+        concurrency: number,
     ): Promise<EmbeddingIndexTagsResult> {
-        return this.request("embedding_index_tags", { sessionId, items });
+        return this.request("embedding_index_tags", {
+            sessionId,
+            items,
+            concurrency,
+        });
     }
 
     pruneEmbeddingTags(sessionId: string): Promise<EmbeddingPruneTagsResult> {
