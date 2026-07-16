@@ -428,6 +428,46 @@ impl TextVectorStore {
         Ok(unique_ids.len())
     }
 
+    pub fn prune_item_links(
+        &mut self,
+        namespace: &str,
+        kind: &str,
+        keep_item_ids: &HashSet<String>,
+    ) -> Result<u64, StoreError> {
+        validate_scope(namespace, kind)?;
+        let transaction = self.connection.transaction()?;
+        let stale_links = {
+            let mut statement = transaction.prepare(
+                "SELECT l.document_row_id, l.item_id
+                 FROM text_document_links l
+                 JOIN text_documents d ON d.id = l.document_row_id
+                 WHERE d.namespace = ?1 AND d.kind = ?2",
+            )?;
+            statement
+                .query_map(params![namespace, kind], |row| {
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+                })?
+                .filter_map(|row| match row {
+                    Ok((document_row_id, item_id)) if !keep_item_ids.contains(&item_id) => {
+                        Some(Ok((document_row_id, item_id)))
+                    }
+                    Ok(_) => None,
+                    Err(error) => Some(Err(error)),
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        };
+
+        for (document_row_id, item_id) in &stale_links {
+            transaction.execute(
+                "DELETE FROM text_document_links
+                 WHERE document_row_id = ?1 AND item_id = ?2",
+                params![document_row_id, item_id],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(stale_links.len() as u64)
+    }
+
     pub fn linked_item_ids(&self, document_row_id: i64) -> Result<Vec<String>, StoreError> {
         let mut statement = self.connection.prepare(
             "SELECT item_id FROM text_document_links
@@ -1077,5 +1117,28 @@ mod tests {
         );
         assert_eq!(store.count_documents("library-a", "tag").unwrap(), 1);
         assert_eq!(store.count_embeddings("library-a", "tag").unwrap(), 1);
+    }
+
+    #[test]
+    fn prunes_links_for_items_missing_from_the_current_library() {
+        let mut store = TextVectorStore::open_in_memory("text-model", 2).unwrap();
+        store
+            .upsert(&vector("beach", "beach", vec![1.0, 0.0]))
+            .unwrap();
+        store
+            .replace_item_links("library-a", "tag", "deleted-image", &["beach".to_string()])
+            .unwrap();
+        store
+            .replace_item_links("library-a", "tag", "current-image", &["beach".to_string()])
+            .unwrap();
+
+        let keep = ["current-image".to_string()].into_iter().collect();
+        assert_eq!(store.prune_item_links("library-a", "tag", &keep).unwrap(), 1);
+        assert_eq!(
+            store
+                .linked_item_ids_by_key("library-a", "tag", "beach")
+                .unwrap(),
+            ["current-image"]
+        );
     }
 }

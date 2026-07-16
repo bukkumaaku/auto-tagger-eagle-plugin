@@ -242,8 +242,8 @@ export class BackendClient {
         });
     }
 
-    pruneEmbeddingTags(sessionId: string): Promise<EmbeddingPruneTagsResult> {
-        return this.request("embedding_prune_tags", { sessionId });
+    pruneEmbeddingTags(sessionId: string, itemIds: string[]): Promise<EmbeddingPruneTagsResult> {
+        return this.request("embedding_prune_tags", { sessionId, itemIds });
     }
 
     pruneEmbedding(

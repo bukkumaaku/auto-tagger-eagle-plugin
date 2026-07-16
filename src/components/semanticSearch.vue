@@ -279,6 +279,9 @@
     watch(canIncludeTags, (enabled) => {
         if (!enabled) includeTags.value = false;
     });
+    watch(searchMode, (mode) => {
+        if (mode !== "text") includeTags.value = false;
+    });
     watch(searchLoadSentinel, (sentinel) => {
         searchResultObserver?.disconnect();
         searchResultObserver = null;
@@ -681,7 +684,10 @@
                     completed: tagProcessedItems.value,
                 });
             }
-            const pruned = await getBackendClient().pruneEmbeddingTags(SESSION_ID);
+            const pruned = await getBackendClient().pruneEmbeddingTags(
+                SESSION_ID,
+                images.map((image) => image.id),
+            );
             tagIndexedCount.value = pruned.totalTags;
             tagLinkCount.value = pruned.totalLinks;
             tagIndexStatus.value = tagIndexFailures.value.length
@@ -834,6 +840,10 @@
             updateTask(taskId, { detail: "正在生成查询向量" });
             await ensureSession();
             const backend = getBackendClient();
+            const useTagFusion =
+                searchMode.value === "text" &&
+                includeTags.value &&
+                canIncludeTags.value;
             const resultCount = Math.max(
                 1,
                 Math.min(indexedCount.value, MAX_SEARCH_RESULTS),
@@ -846,7 +856,7 @@
                         SESSION_ID,
                         queryText.value,
                         resultCount,
-                        includeTags.value && canIncludeTags.value,
+                        useTagFusion,
                     )
                 ).hits;
             } else {
@@ -880,7 +890,7 @@
                         SESSION_ID,
                         negativeQueryText.value,
                         resultCount,
-                        includeTags.value && canIncludeTags.value,
+                        useTagFusion,
                     )
                 ).hits;
                 hits = filterNegativeHits(hits, negativeHits);
@@ -1054,7 +1064,7 @@
                     v-model:value="selectedModel"
                     :options="modelOptions"
                     :loading="isLoadingModels"
-                    :disabled="isIndexing || isSearching"
+                    :disabled="isIndexing || isTagIndexing || isSearching"
                     placeholder="未检测到可用模型"
                     class="model-select"
                 />
@@ -1062,7 +1072,7 @@
             <n-button
                 type="primary"
                 secondary
-                :disabled="isIndexing || isSearching"
+                :disabled="isIndexing || isTagIndexing || isSearching"
                 @click="showDownload = true"
             >
                 <template #icon>

@@ -376,6 +376,17 @@ pub fn prune_tags(
     let mut session = handle.lock().map_err(session_error)?;
     let session_id = request.session_id.clone();
     let namespace = session.settings.namespace.clone();
+    let keep_item_ids = request
+        .item_ids
+        .into_iter()
+        .filter(|item_id| !item_id.trim().is_empty())
+        .collect::<HashSet<_>>();
+    if !keep_item_ids.is_empty() {
+        session
+            .text_store
+            .prune_item_links(&namespace, "tag", &keep_item_ids)
+            .map_err(store_error)?;
+    }
     let removed_tags = session
         .text_store
         .prune_unlinked_documents(&namespace, "tag")

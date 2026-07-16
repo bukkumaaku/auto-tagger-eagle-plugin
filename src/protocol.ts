@@ -128,6 +128,7 @@ export type EmbeddingPruneRequest = {
 
 export type EmbeddingPruneTagsRequest = {
     sessionId: string;
+    itemIds: string[];
 };
 
 export type EmbeddingHealthRequest = {

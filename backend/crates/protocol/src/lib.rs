@@ -166,6 +166,8 @@ pub struct EmbeddingPruneRequest {
 #[serde(rename_all = "camelCase")]
 pub struct EmbeddingPruneTagsRequest {
     pub session_id: String,
+    #[serde(default)]
+    pub item_ids: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
