@@ -1258,7 +1258,7 @@
                             :disabled="isSearching || isIndexing || isTagIndexing"
                             @keyup.enter="runSearch"
                         />
-                        <div v-else class="selected-image-mode">
+                        <div v-if="searchMode === 'image'" class="selected-image-mode">
                             <n-icon :size="20"><ImageOutline /></n-icon>
                             <span>当前选中图片</span>
                         </div>
