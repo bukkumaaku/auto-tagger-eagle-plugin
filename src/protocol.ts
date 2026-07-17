@@ -106,6 +106,7 @@ export type EmbeddingImageInput = {
     id: string;
     path: string;
     name: string;
+    annotation?: string;
     modifiedAt: number;
 };
 
@@ -153,6 +154,7 @@ export type EmbeddingSearchTextRequest = {
     text: string;
     topK: number;
     includeTags?: boolean;
+    includeContext?: boolean;
 };
 
 export type EmbeddingSearchImageRequest = {
@@ -161,6 +163,7 @@ export type EmbeddingSearchImageRequest = {
     excludeItemId: string;
     imageModifiedAt: number;
     topK: number;
+    includeContext?: boolean;
 };
 
 export type EmbeddingUnloadRequest = {

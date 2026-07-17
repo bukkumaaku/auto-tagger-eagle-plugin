@@ -157,6 +157,7 @@ pub fn index_batch(
     let handle = embedding_session(sessions, &request.session_id)?;
     let mut session = handle.lock().map_err(session_error)?;
     let namespace = session.settings.namespace.clone();
+    let requested_images = request.images.clone();
     let mut skipped_ids = Vec::new();
     let mut failures = Vec::new();
     let mut pending = Vec::new();
@@ -255,6 +256,14 @@ pub fn index_batch(
         })
         .collect::<Vec<_>>();
     session.store.upsert_many(&records).map_err(store_error)?;
+    sync_annotation_embeddings(
+        &mut session,
+        &namespace,
+        &requested_images,
+        &indexed_ids,
+        &skipped_ids,
+        &mut failures,
+    )?;
     let total_indexed = indexed_count(&session)?;
 
     Ok(EmbeddingIndexBatchResult {
@@ -441,6 +450,14 @@ pub fn prune(
         .store
         .delete_missing(&namespace, Modality::Image, SOURCE_KEY, &keep_ids)
         .map_err(store_error)?;
+    session
+        .text_store
+        .prune_item_links(&namespace, "annotation", &keep_ids)
+        .map_err(store_error)?;
+    session
+        .text_store
+        .prune_unlinked_documents(&namespace, "annotation")
+        .map_err(store_error)?;
     let total_indexed = indexed_count(&session)?;
 
     Ok(EmbeddingPruneResult {
@@ -608,18 +625,21 @@ pub fn search_text(
             .map_err(store_error)?;
         embedding
     };
-    let fetch_count = request.top_k.min(available);
+    let fetch_count = multimodal_fetch_count(request.top_k, available);
     let results = session
         .store
         .search(&namespace, Some(Modality::Image), &query, fetch_count)
         .map_err(store_error)?;
     let hits = search_hits(results, None, fetch_count);
-    let hits = if request.include_tags {
-        merge_tag_hits(&session.text_store, &namespace, &query, hits, fetch_count)
-            .map_err(store_error)?
-    } else {
-        hits
-    };
+    let hits = fuse_multimodal_hits(
+        &session.text_store,
+        &namespace,
+        &query,
+        hits,
+        request.top_k,
+        request.include_tags,
+    )
+    .map_err(store_error)?;
 
     Ok(EmbeddingSearchResult {
         session_id: request.session_id,
@@ -684,19 +704,30 @@ pub fn search_image(
         embedding
     };
     let result_count = request.top_k.min(available);
-    let fetch_count = image_search_fetch_count(result_count, available);
+    let fetch_count = multimodal_fetch_count(result_count, available);
     let results = session
         .store
         .search(&namespace, Some(Modality::Image), &query, fetch_count)
         .map_err(store_error)?;
 
+    let hits = search_hits(
+        results,
+        (!request.exclude_item_id.is_empty()).then_some(request.exclude_item_id.as_str()),
+        fetch_count,
+    );
+    let hits = fuse_multimodal_hits(
+        &session.text_store,
+        &namespace,
+        &query,
+        hits,
+        result_count,
+        true,
+    )
+    .map_err(store_error)?;
+
     Ok(EmbeddingSearchResult {
         session_id: request.session_id,
-        hits: search_hits(
-            results,
-            (!request.exclude_item_id.is_empty()).then_some(request.exclude_item_id.as_str()),
-            result_count,
-        ),
+        hits,
     })
 }
 
@@ -1076,62 +1107,146 @@ fn tag_link_count(session: &EmbeddingSession) -> HandlerResult<u64> {
         .map_err(store_error)
 }
 
-fn merge_tag_hits(
+fn sync_annotation_embeddings(
+    session: &mut EmbeddingSession,
+    namespace: &str,
+    images: &[protocol::EmbeddingImageInput],
+    indexed_ids: &[String],
+    skipped_ids: &[String],
+    failures: &mut Vec<EmbeddingImageFailure>,
+) -> HandlerResult<()> {
+    let eligible = indexed_ids
+        .iter()
+        .chain(skipped_ids.iter())
+        .collect::<HashSet<_>>();
+    let mut pending = Vec::new();
+    for image in images {
+        if !eligible.contains(&image.id) {
+            continue;
+        }
+        let content = image.annotation.trim();
+        if content.is_empty() {
+            session
+                .text_store
+                .replace_item_links(namespace, "annotation", &image.id, &[])
+                .map_err(store_error)?;
+            session
+                .text_store
+                .delete_document(namespace, "annotation", &image.id)
+                .map_err(store_error)?;
+            continue;
+        }
+        let document = TextDocumentRecord {
+            namespace: namespace.to_string(),
+            kind: "annotation".to_string(),
+            document_id: image.id.clone(),
+            content: content.to_string(),
+            updated_at: image.modified_at,
+        };
+        let needs = session
+            .text_store
+            .needs_embedding(namespace, "annotation", &image.id, content)
+            .map_err(store_error)?;
+        session
+            .text_store
+            .upsert_document(&document)
+            .map_err(store_error)?;
+        session
+            .text_store
+            .replace_item_links(namespace, "annotation", &image.id, &[image.id.clone()])
+            .map_err(store_error)?;
+        if needs {
+            pending.push((image.clone(), document));
+        }
+    }
+    let texts = pending
+        .iter()
+        .map(|(_, document)| document.content.clone())
+        .collect::<Vec<_>>();
+    for ((image, document), result) in pending
+        .into_iter()
+        .zip(session.engine.embed_texts(&texts, 4))
+    {
+        match result {
+            Ok(embedding) => {
+                let _ = session
+                    .text_store
+                    .upsert(&TextVectorRecord { document, embedding })
+                    .map_err(store_error)?;
+            }
+            Err(error) => failures.push(EmbeddingImageFailure {
+                id: image.id,
+                path: image.path,
+                error: format!("annotation embedding failed: {error}"),
+            }),
+        }
+    }
+    Ok(())
+}
+
+fn multimodal_fetch_count(top_k: usize, available: usize) -> usize {
+    top_k.saturating_mul(8).max(top_k).min(available)
+}
+
+#[cfg(test)]
+fn image_search_fetch_count(result_count: usize, available: usize) -> usize {
+    result_count.saturating_add(1).min(available).min(MAX_SEARCH_RESULTS)
+}
+
+#[cfg(test)]
+fn merge_tag_hits(store: &TextVectorStore, namespace: &str, query: &[f32], image_hits: Vec<EmbeddingSearchHit>, top_k: usize) -> Result<Vec<EmbeddingSearchHit>, text_vector_store::StoreError> {
+    fuse_multimodal_hits(store, namespace, query, image_hits, top_k, true)
+}
+
+fn fuse_multimodal_hits(
     store: &TextVectorStore,
     namespace: &str,
     query: &[f32],
     mut image_hits: Vec<EmbeddingSearchHit>,
     top_k: usize,
+    include_tags: bool,
 ) -> Result<Vec<EmbeddingSearchHit>, text_vector_store::StoreError> {
     if image_hits.is_empty() {
         return Ok(image_hits);
     }
-    let tag_count = store.count_embeddings(namespace, "tag")? as usize;
-    if tag_count == 0 {
-        return Ok(image_hits);
-    }
-    let tag_results = store.search(namespace, "tag", query, tag_count.min(64))?;
     let candidates = image_hits
         .iter()
         .map(|hit| hit.item_id.as_str())
         .collect::<HashSet<_>>();
-    let mut tag_scores = HashMap::<String, f64>::new();
-    for (rank, tag) in tag_results.iter().enumerate() {
-        let tag_weight = tag.similarity.max(0.0) / (rank as f64 + 1.0);
-        if tag_weight <= f64::EPSILON {
+    let mut scores: HashMap<String, (f64, f64, f64)> = image_hits
+        .iter()
+        .map(|hit| (hit.item_id.clone(), (hit.similarity.max(0.0), 0.0, 0.0)))
+        .collect::<HashMap<_, _>>();
+    for kind in ["annotation", "tag"] {
+        if kind == "tag" && !include_tags {
             continue;
         }
-        for item_id in store.linked_item_ids(tag.document_row_id)? {
-            if candidates.contains(item_id.as_str()) {
-                *tag_scores.entry(item_id).or_default() += tag_weight;
+        let count = store.count_embeddings(namespace, kind)? as usize;
+        if count == 0 {
+            continue;
+        }
+        for result in store.search(namespace, kind, query, count.min(4096))? {
+            for item_id in store.linked_item_ids(result.document_row_id)? {
+                if candidates.contains(item_id.as_str()) {
+                    if let Some(score) = scores.get_mut(&item_id) {
+                        let similarity = result.similarity.max(0.0);
+                        if kind == "annotation" {
+                            score.1 = score.1.max(similarity);
+                        } else {
+                            score.2 = score.2.max(similarity);
+                        }
+                    }
+                }
             }
         }
     }
-    let mut ranked_tags = tag_scores.into_iter().collect::<Vec<_>>();
-    ranked_tags.sort_by(|left, right| right.1.total_cmp(&left.1));
-    let tag_ranks = ranked_tags
-        .into_iter()
-        .enumerate()
-        .map(|(rank, (item_id, _))| (item_id, rank))
-        .collect::<HashMap<_, _>>();
-    if tag_ranks.is_empty() {
-        return Ok(image_hits);
+    for hit in &mut image_hits {
+        let (image, annotation, tag) = scores.get(&hit.item_id).copied().unwrap_or_default();
+        hit.similarity = image * 0.7 + annotation * 0.2 + tag * 0.1;
     }
-    let mut max_score = 0.0_f64;
-    for (rank, hit) in image_hits.iter_mut().enumerate() {
-        let image_score = 1.0 / (60.0 + rank as f64);
-        let tag_score = tag_ranks
-            .get(&hit.item_id)
-            .map(|tag_rank| 1.0 / (60.0 + *tag_rank as f64))
-            .unwrap_or(0.0);
-        let score = image_score * 0.7 + tag_score * 0.3;
-        max_score = max_score.max(score);
-        hit.similarity = score;
-    }
+    let max_score = image_hits.iter().map(|hit| hit.similarity).fold(0.0_f64, f64::max);
     if max_score > 0.0 {
-        for hit in &mut image_hits {
-            hit.similarity /= max_score;
-        }
+        for hit in &mut image_hits { hit.similarity /= max_score; }
     }
     image_hits.sort_by(|left, right| right.similarity.total_cmp(&left.similarity));
     image_hits.truncate(top_k);
@@ -1176,13 +1291,6 @@ fn validate_top_k(top_k: usize) -> HandlerResult<()> {
             format!("topK must be between 1 and {MAX_SEARCH_RESULTS}"),
         ))
     }
-}
-
-fn image_search_fetch_count(result_count: usize, available: usize) -> usize {
-    result_count
-        .saturating_add(1)
-        .min(available)
-        .min(MAX_SEARCH_RESULTS)
 }
 
 fn session_key(session_id: &str) -> String {
@@ -1390,6 +1498,7 @@ mod tests {
                     id: "image-1".to_string(),
                     path: image_path.to_string_lossy().into_owned(),
                     name: "Remote image".to_string(),
+                    annotation: String::new(),
                     modified_at: 1,
                 }],
             },

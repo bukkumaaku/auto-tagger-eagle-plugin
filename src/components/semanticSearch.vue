@@ -530,6 +530,7 @@
             id: item.id,
             path: item.filePath || item.thumbnailPath || "",
             name: item.name || "",
+            annotation: item.annotation || "",
             modifiedAt: Number(item.modifiedAt) || 0,
         };
     }

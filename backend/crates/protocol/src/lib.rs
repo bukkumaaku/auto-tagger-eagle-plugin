@@ -121,13 +121,15 @@ pub struct EmbeddingLoadRequest {
     pub remote_dimension: usize,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EmbeddingImageInput {
     pub id: String,
     pub path: String,
     #[serde(default)]
     pub name: String,
+    #[serde(default)]
+    pub annotation: String,
     pub modified_at: i64,
 }
 
