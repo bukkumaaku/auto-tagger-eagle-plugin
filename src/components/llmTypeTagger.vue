@@ -16,6 +16,7 @@
     } from "naive-ui";
     import { CloudDownloadOutline } from "@vicons/ionicons5";
     import {
+        computed,
         h,
         nextTick,
         onBeforeUnmount,
@@ -75,7 +76,6 @@ import {
         llmApiKey: string;
         llmRemoteModel: string;
         llmProfileId: string;
-        llmProfileName: string;
         tagPrompt: string;
         annotationPrompt: string;
         overwrite: OverwriteMode;
@@ -113,9 +113,39 @@ import {
     const selectedBackup = ref("");
     const isRestoring = ref(false);
     const llmProfiles = ref<RemoteLlmProfile[]>([]);
-    const loadLlmProfile = () => { const profile = llmProfiles.value.find((item) => item.id === formData.value.llmProfileId); if (!profile) return; Object.assign(formData.value, { llmProfileName: profile.name, llmProvider: profile.provider, llmEndpoint: profile.endpoint, llmApiKey: profile.apiKey, llmRemoteModel: profile.model }); };
-    const addLlmProfile = () => { const id = `llm-${Date.now()}-${Math.random().toString(16).slice(2)}`; llmProfiles.value.push({ id, name: `远程 LLM ${llmProfiles.value.length + 1}`, provider: "open_ai", endpoint: "", apiKey: "", model: "" }); formData.value.llmProfileId = id; loadLlmProfile(); };
-    const removeLlmProfile = () => { llmProfiles.value = llmProfiles.value.filter((item) => item.id !== formData.value.llmProfileId); formData.value.llmProfileId = llmProfiles.value[0]?.id || ""; if (formData.value.llmProfileId) loadLlmProfile(); };
+    const loadLlmProfile = () => {
+        const profile = llmProfiles.value.find(
+            (item) => item.id === formData.value.llmProfileId,
+        );
+        if (!profile) return false;
+        Object.assign(formData.value, {
+            llmProvider: profile.provider,
+            llmEndpoint: profile.endpoint,
+            llmApiKey: profile.apiKey,
+            llmRemoteModel: profile.model,
+        });
+        return true;
+    };
+    const modelSource = computed({
+        get: () => formData.value.llmProvider === "local"
+            ? "local"
+            : `remote:${formData.value.llmProfileId}`,
+        set: (value: string) => {
+            if (value === "local") {
+                formData.value.llmProvider = "local";
+                return;
+            }
+            formData.value.llmProfileId = value.replace(/^remote:/, "");
+            loadLlmProfile();
+        },
+    });
+    const modelSourceOptions = computed(() => [
+        { label: t.value("llm_tagger.offline"), value: "local" },
+        ...llmProfiles.value.map((profile) => ({
+            label: `${profile.name || profile.model || profile.endpoint} (${profile.model})`,
+            value: `remote:${profile.id}`,
+        })),
+    ]);
 
     const normalizeOverwriteMode = (value: string): OverwriteMode =>
         value === "nocover" || value === "cover" || value === "merge"
@@ -158,6 +188,7 @@ import {
         llmProfiles.value = (config.llmRemoteProfiles || []).map((profile) => ({ ...profile }));
         if (llmProfiles.value.length === 0 && config.llmEndpoint && config.llmRemoteModel) llmProfiles.value.push({ id: "legacy", name: "远程 LLM", provider: config.llmProvider === "gemini" ? "gemini" : "open_ai", endpoint: config.llmEndpoint, apiKey: config.llmApiKey, model: config.llmRemoteModel });
         const activeProfile = llmProfiles.value.find((profile) => profile.id === config.llmRemoteProfileId) || llmProfiles.value[0];
+        const useRemoteProfile = config.llmProvider !== "local" && activeProfile;
         promptMode.value = normalizePromptMode(
             config.llmTaggerOrAnnotation === "tagger"
                 ? "tag"
@@ -165,12 +196,11 @@ import {
         );
         formData.value = {
             model: "",
-            llmProvider: activeProfile?.provider || config.llmProvider || "local",
+            llmProvider: useRemoteProfile ? activeProfile.provider : "local",
             llmEndpoint: activeProfile?.endpoint || config.llmEndpoint || "",
             llmApiKey: activeProfile?.apiKey || config.llmApiKey || "",
             llmRemoteModel: activeProfile?.model || config.llmRemoteModel || "",
             llmProfileId: activeProfile?.id || "",
-            llmProfileName: activeProfile?.name || "",
             tagPrompt:
                 config.llmTaggerPrompt || DEFAULT_LLM_TAG_PROMPT,
             annotationPrompt:
@@ -193,9 +223,6 @@ import {
         config.llmEndpoint = formData.value.llmEndpoint;
         config.llmApiKey = formData.value.llmApiKey;
         config.llmRemoteModel = formData.value.llmRemoteModel;
-        const profile = llmProfiles.value.find((item) => item.id === formData.value.llmProfileId);
-        if (profile) Object.assign(profile, { name: formData.value.llmProfileName, provider: formData.value.llmProvider === "local" ? "open_ai" : formData.value.llmProvider, endpoint: formData.value.llmEndpoint, apiKey: formData.value.llmApiKey, model: formData.value.llmRemoteModel });
-        config.llmRemoteProfiles = llmProfiles.value;
         config.llmRemoteProfileId = formData.value.llmProfileId;
         config.llmTaggerPrompt = formData.value.tagPrompt;
         config.llmAnnotationPrompt = formData.value.annotationPrompt;
@@ -222,7 +249,7 @@ import {
             formData.value.tagPrompt,
             formData.value.annotationPrompt,
             formData.value.overwrite,
-            formData.value.llmProfileName,
+            formData.value.llmProfileId,
             formData.value.llmProvider,
             formData.value.llmEndpoint,
             formData.value.llmApiKey,
@@ -241,7 +268,6 @@ import {
             if (isReady.value) void refreshBackups();
         },
     );
-    watch(() => formData.value.llmProfileId, () => { if (isReady.value) loadLlmProfile(); });
 
     watch(promptMode, () => {
         if (!isProcessing.value) {
@@ -663,10 +689,19 @@ import {
                 </div>
             </n-form-item>
 
-            <n-form-item :label="t('llm_tagger.model')" path="model">
-                <div class="remote-llm-fields"><n-select v-model:value="formData.llmProfileId" :options="llmProfiles.map((profile) => ({ label: profile.name || profile.model || profile.endpoint, value: profile.id }))" placeholder="选择已保存的远程 LLM" /><n-button @click="addLlmProfile">新增</n-button><n-button :disabled="!formData.llmProfileId" @click="removeLlmProfile">删除</n-button><n-input v-if="formData.llmProfileId" v-model:value="formData.llmProfileName" placeholder="接口名称" /></div>
-                <n-form-item label="LLM Provider"><n-select v-model:value="formData.llmProvider" :options="[{ label: 'Local llamafile', value: 'local' }, { label: 'OpenAI compatible', value: 'open_ai' }, { label: 'Gemini REST', value: 'gemini' }]" :disabled="isProcessing" /></n-form-item>
-                <div v-if="formData.llmProvider !== 'local'" class="remote-llm-fields"><n-input v-model:value="formData.llmEndpoint" placeholder="Endpoint URL" :disabled="isProcessing" /><n-input v-model:value="formData.llmApiKey" type="password" placeholder="API key" :disabled="isProcessing" /><n-input v-model:value="formData.llmRemoteModel" placeholder="Remote model" :disabled="isProcessing" /></div>
+            <n-form-item :label="t('llm_tagger.model')">
+                <n-select
+                    v-model:value="modelSource"
+                    :options="modelSourceOptions"
+                    :disabled="isProcessing"
+                />
+            </n-form-item>
+
+            <n-form-item
+                v-if="formData.llmProvider === 'local'"
+                :label="t('llm_tagger.offline')"
+                path="model"
+            >
                 <FormHelp :content="t('llm_tagger.model_desc')" />
                 <div class="model-row">
                     <n-select

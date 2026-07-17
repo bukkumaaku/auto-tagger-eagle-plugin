@@ -7,6 +7,7 @@
         NInput,
         NInputNumber,
         NSelect,
+        NDivider,
     } from "naive-ui";
     import { CloudDownloadOutline } from "@vicons/ionicons5";
     import { onBeforeUnmount, onMounted, ref, watch, type Ref } from "vue";
@@ -14,7 +15,7 @@
     import { DEFAULT_GEMINI_EMBEDDING_MODEL } from "../constants/embedding";
     import downloadModal from "./downloadModal.vue";
     import FormHelp from "./formHelp.vue";
-    import type { RemoteEmbeddingProfile } from "../protocol";
+    import type { RemoteEmbeddingProfile, RemoteLlmProfile } from "../protocol";
 
     type SettingsFormData = {
         modelLocation: string;
@@ -26,6 +27,7 @@
         embeddingDimension: number;
         embeddingRemoteProfiles: RemoteEmbeddingProfile[];
         embeddingRemoteProfileId: string;
+        llmRemoteProfiles: RemoteLlmProfile[];
     };
 
     const defaultFormData: SettingsFormData = {
@@ -38,13 +40,19 @@
         embeddingDimension: 1536,
         embeddingRemoteProfiles: [],
         embeddingRemoteProfileId: "",
+        llmRemoteProfiles: [],
     };
 
-    const cloneFormData = (value: SettingsFormData): SettingsFormData => ({ ...value, embeddingRemoteProfiles: value.embeddingRemoteProfiles.map((profile) => ({ ...profile })) });
+    const cloneFormData = (value: SettingsFormData): SettingsFormData => ({
+        ...value,
+        embeddingRemoteProfiles: value.embeddingRemoteProfiles.map((profile) => ({ ...profile })),
+        llmRemoteProfiles: value.llmRemoteProfiles.map((profile) => ({ ...profile })),
+    });
 
     let originalConfig: SettingsFormData = cloneFormData(defaultFormData);
     const formData: Ref<SettingsFormData> = ref(cloneFormData(defaultFormData));
     const isReady = ref(false);
+    const selectedLlmProfileId = ref("");
     const showLlamafileDownload = ref(false);
     let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -62,6 +70,25 @@
         if (!formData.value.embeddingRemoteProfileId) formData.value.embeddingRemoteProfileId = formData.value.embeddingRemoteProfiles[0]?.id || "";
         if (formData.value.embeddingRemoteProfiles.length === 0 && formData.value.endpoint && formData.value.embeddingModelName) addRemoteProfile(false);
         loadActiveProfile();
+        if (
+            formData.value.llmRemoteProfiles.length === 0 &&
+            config.llmEndpoint &&
+            config.llmRemoteModel
+        ) {
+            formData.value.llmRemoteProfiles.push({
+                id: "llm-legacy",
+                name: t.value("settings.remote_llm_legacy"),
+                provider: config.llmProvider === "gemini" ? "gemini" : "open_ai",
+                endpoint: config.llmEndpoint,
+                apiKey: config.llmApiKey,
+                model: config.llmRemoteModel,
+            });
+        }
+        selectedLlmProfileId.value = formData.value.llmRemoteProfiles.some(
+            (profile) => profile.id === config.llmRemoteProfileId,
+        )
+            ? config.llmRemoteProfileId
+            : formData.value.llmRemoteProfiles[0]?.id || "";
     };
 
     const activeProfile = () => formData.value.embeddingRemoteProfiles.find((profile) => profile.id === formData.value.embeddingRemoteProfileId);
@@ -69,12 +96,48 @@
     const addRemoteProfile = (select = true) => { const id = `embedding-${Date.now()}-${Math.random().toString(16).slice(2)}`; formData.value.embeddingRemoteProfiles.push({ id, name: `远程接口 ${formData.value.embeddingRemoteProfiles.length + 1}`, provider: formData.value.embeddingProvider, endpoint: formData.value.endpoint, apiKey: formData.value.apiKey, model: formData.value.embeddingModelName, dimension: formData.value.embeddingDimension }); formData.value.embeddingRemoteProfileId = id; if (select) loadActiveProfile(); };
     const removeRemoteProfile = () => { const id = formData.value.embeddingRemoteProfileId; formData.value.embeddingRemoteProfiles = formData.value.embeddingRemoteProfiles.filter((profile) => profile.id !== id); formData.value.embeddingRemoteProfileId = formData.value.embeddingRemoteProfiles[0]?.id || ""; loadActiveProfile(); };
     const updateActiveProfile = () => { const profile = activeProfile(); if (!profile) return; Object.assign(profile, { provider: formData.value.embeddingProvider, endpoint: formData.value.endpoint, apiKey: formData.value.apiKey, model: formData.value.embeddingModelName, dimension: formData.value.embeddingDimension }); };
+    const activeLlmProfile = () => formData.value.llmRemoteProfiles.find(
+        (profile) => profile.id === selectedLlmProfileId.value,
+    );
+    const addLlmProfile = () => {
+        const id = `llm-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        formData.value.llmRemoteProfiles.push({
+            id,
+            name: `${t.value("settings.remote_llm_default_name")} ${formData.value.llmRemoteProfiles.length + 1}`,
+            provider: "open_ai",
+            endpoint: "",
+            apiKey: "",
+            model: "",
+        });
+        selectedLlmProfileId.value = id;
+    };
+    const removeLlmProfile = () => {
+        const removedId = selectedLlmProfileId.value;
+        formData.value.llmRemoteProfiles = formData.value.llmRemoteProfiles.filter(
+            (profile) => profile.id !== removedId,
+        );
+        selectedLlmProfileId.value = formData.value.llmRemoteProfiles[0]?.id || "";
+        if (config.llmRemoteProfileId === removedId) {
+            config.llmRemoteProfileId = selectedLlmProfileId.value;
+            if (!selectedLlmProfileId.value) config.llmProvider = "local";
+        }
+    };
 
     const syncFormToConfig = async () => {
         updateActiveProfile();
         Object.entries(formData.value).forEach(([key, value]) => {
             config[key] = value;
         });
+        if (
+            config.llmProvider !== "local" &&
+            !formData.value.llmRemoteProfiles.some(
+                (profile) => profile.id === config.llmRemoteProfileId,
+            )
+        ) {
+            const fallback = formData.value.llmRemoteProfiles[0];
+            config.llmRemoteProfileId = fallback?.id || "";
+            config.llmProvider = fallback?.provider || "local";
+        }
         await backenAPI.setConfig();
     };
 
@@ -172,6 +235,11 @@
         if (saveTimer) clearTimeout(saveTimer);
         saveTimer = undefined;
         formData.value = cloneFormData(originalConfig);
+        if (!formData.value.llmRemoteProfiles.some(
+            (profile) => profile.id === selectedLlmProfileId.value,
+        )) {
+            selectedLlmProfileId.value = formData.value.llmRemoteProfiles[0]?.id || "";
+        }
         await syncFormToConfig();
     };
 </script>
@@ -213,6 +281,75 @@
                 {{ t("settings.download_llamafile") }}
             </n-button>
         </n-form-item>
+
+        <n-divider title-placement="left">
+            {{ t("settings.remote_llm") }}
+        </n-divider>
+
+        <n-form-item :label="t('settings.remote_llm_profiles')">
+            <n-select
+                v-model:value="selectedLlmProfileId"
+                :options="formData.llmRemoteProfiles.map((profile) => ({
+                    label: profile.name || profile.model || profile.endpoint,
+                    value: profile.id,
+                }))"
+                :placeholder="t('settings.remote_llm_select')"
+            />
+            <n-button @click="addLlmProfile">
+                {{ t("settings.remote_llm_add") }}
+            </n-button>
+            <n-button
+                :disabled="!selectedLlmProfileId"
+                @click="removeLlmProfile"
+            >
+                {{ t("settings.remote_llm_remove") }}
+            </n-button>
+        </n-form-item>
+
+        <template v-if="activeLlmProfile()">
+            <n-form-item :label="t('settings.remote_llm_name')">
+                <n-input
+                    v-model:value="activeLlmProfile()!.name"
+                    :placeholder="t('settings.remote_llm_name_placeholder')"
+                />
+            </n-form-item>
+            <n-form-item :label="t('settings.remote_llm_provider')">
+                <n-select
+                    v-model:value="activeLlmProfile()!.provider"
+                    :options="[
+                        { label: 'OpenAI Compatible', value: 'open_ai' },
+                        { label: 'Gemini REST', value: 'gemini' },
+                    ]"
+                />
+            </n-form-item>
+            <n-form-item :label="t('settings.remote_llm_endpoint')">
+                <n-input
+                    v-model:value="activeLlmProfile()!.endpoint"
+                    :placeholder="activeLlmProfile()!.provider === 'gemini'
+                        ? 'https://generativelanguage.googleapis.com'
+                        : 'https://api.openai.com'"
+                />
+            </n-form-item>
+            <n-form-item :label="t('settings.remote_llm_api_key')">
+                <n-input
+                    v-model:value="activeLlmProfile()!.apiKey"
+                    type="password"
+                    show-password-on="click"
+                />
+            </n-form-item>
+            <n-form-item :label="t('settings.remote_llm_model')">
+                <n-input
+                    v-model:value="activeLlmProfile()!.model"
+                    :placeholder="activeLlmProfile()!.provider === 'gemini'
+                        ? 'gemini-2.5-flash'
+                        : 'gpt-4.1-mini'"
+                />
+            </n-form-item>
+        </template>
+
+        <n-divider title-placement="left">
+            {{ t("settings.remote_embedding") }}
+        </n-divider>
 
         <n-form-item
             :label="t('settings.embedding_provider')"
