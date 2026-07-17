@@ -740,7 +740,7 @@ import {
                 </n-button>
                 <n-button
                     type="primary"
-                    :disabled="isProcessing || !formData.model"
+                    :disabled="isProcessing || (formData.llmProvider === 'local' ? !formData.model : (!formData.llmEndpoint || !formData.llmRemoteModel))"
                     :loading="isProcessing"
                     @click="processSelected(promptMode)"
                 >
