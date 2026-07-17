@@ -1133,7 +1133,10 @@ mod tests {
             .unwrap();
 
         let keep = ["current-image".to_string()].into_iter().collect();
-        assert_eq!(store.prune_item_links("library-a", "tag", &keep).unwrap(), 1);
+        assert_eq!(
+            store.prune_item_links("library-a", "tag", &keep).unwrap(),
+            1
+        );
         assert_eq!(
             store
                 .linked_item_ids_by_key("library-a", "tag", "beach")

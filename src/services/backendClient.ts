@@ -1,5 +1,4 @@
 import {
-    type AaaResult,
     type CheckForUpdateResult,
     type CommandPayloadMap,
     type CommandType,
@@ -136,10 +135,6 @@ export class BackendClient {
 
     echo(message: string): Promise<EchoResult> {
         return this.request("echo", { message });
-    }
-
-    aaa(value: string): Promise<AaaResult> {
-        return this.request("aaa", { value });
     }
 
     checkForUpdate(): Promise<CheckForUpdateResult> {

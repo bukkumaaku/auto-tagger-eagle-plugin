@@ -4,10 +4,6 @@ export type EchoRequest = {
     message: string;
 };
 
-export type AaaRequest = {
-    value: string;
-};
-
 export type CheckForUpdateRequest = Record<string, never>;
 
 export type DownloadFileRequest = {
@@ -256,7 +252,6 @@ export type RemoteVisionProcessImageRequest = { provider: RemoteVisionProvider; 
 
 export type CommandPayloadMap = {
     echo: EchoRequest;
-    aaa: AaaRequest;
     check_for_update: CheckForUpdateRequest;
     download_file: DownloadFileRequest;
     read_config: ReadConfigRequest;
@@ -303,10 +298,6 @@ export type WorkerRequest<K extends CommandType = CommandType> = {
 
 export type EchoResult = {
     message: string;
-};
-
-export type AaaResult = {
-    value: string;
 };
 
 export type CheckForUpdateResult = {
@@ -544,7 +535,6 @@ export type RemoteVisionProcessImageResult = { provider: RemoteVisionProvider; m
 
 export type ResultDataMap = {
     echo: EchoResult;
-    aaa: AaaResult;
     check_for_update: CheckForUpdateResult;
     download_file: DownloadFileResult;
     read_config: ReadConfigResult;

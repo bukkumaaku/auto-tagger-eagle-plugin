@@ -15,12 +15,6 @@ pub struct EchoRequest {
     pub message: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AaaRequest {
-    pub value: String,
-}
-
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct CheckForUpdateRequest {}
 
@@ -409,7 +403,6 @@ pub struct RemoteVisionProcessImageRequest {
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum Command {
     Echo(EchoRequest),
-    Aaa(AaaRequest),
     CheckForUpdate(CheckForUpdateRequest),
     DownloadFile(DownloadFileRequest),
     ReadConfig(ReadConfigRequest),
@@ -458,12 +451,6 @@ pub struct Request {
 #[serde(rename_all = "camelCase")]
 pub struct EchoResult {
     pub message: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AaaResult {
-    pub value: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -873,7 +860,6 @@ impl ErrorPayload {
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]
 pub enum ResultPayload {
     Echo(EchoResult),
-    Aaa(AaaResult),
     CheckForUpdate(CheckForUpdateResult),
     DownloadFile(DownloadFileResult),
     ReadConfig(ReadConfigResult),
@@ -993,21 +979,31 @@ mod tests {
     }
 
     #[test]
-    fn parses_aaa_request() {
+    fn parses_embedding_index_annotations_request() {
         let json = r#"{
             "protocolVersion": 1,
-            "requestId": "r2",
-            "type": "aaa",
+            "requestId": "annotation-index",
+            "type": "embedding_index_annotations",
             "payload": {
-                "value": "aaa"
+                "sessionId": "embedding-main",
+                "items": [{
+                    "itemId": "image-1",
+                    "annotation": "a detailed annotation",
+                    "updatedAt": 7
+                }],
+                "concurrency": 4
             }
         }"#;
 
         let request: Request = serde_json::from_str(json).unwrap();
-
         match request.command {
-            Command::Aaa(payload) => assert_eq!(payload.value, "aaa"),
-            _ => panic!("expected aaa command"),
+            Command::EmbeddingIndexAnnotations(payload) => {
+                assert_eq!(payload.session_id, "embedding-main");
+                assert_eq!(payload.items.len(), 1);
+                assert_eq!(payload.items[0].item_id, "image-1");
+                assert_eq!(payload.concurrency, 4);
+            }
+            _ => panic!("expected embedding index annotations command"),
         }
     }
 
