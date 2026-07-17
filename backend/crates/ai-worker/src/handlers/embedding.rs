@@ -1185,7 +1185,7 @@ fn sync_annotation_embeddings(
 }
 
 fn multimodal_fetch_count(top_k: usize, available: usize) -> usize {
-    top_k.saturating_mul(8).max(top_k).min(available)
+    top_k.saturating_mul(8).max(top_k).min(available).min(MAX_SEARCH_RESULTS)
 }
 
 #[cfg(test)]
