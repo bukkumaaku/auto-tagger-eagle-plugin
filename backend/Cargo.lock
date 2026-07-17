@@ -41,8 +41,10 @@ dependencies = [
  "csv",
  "downloader",
  "gemini-embedding",
+ "gemini-vision",
  "llamafile",
  "openai-embedding",
+ "openai-vision",
  "protocol",
  "reqwest",
  "serde",
@@ -652,6 +654,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "gemini-vision"
+version = "2.0.1"
+dependencies = [
+ "base64 0.22.1",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1231,6 +1244,17 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 name = "openai-embedding"
 version = "2.0.1"
 dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "openai-vision"
+version = "2.0.1"
+dependencies = [
+ "base64 0.22.1",
  "reqwest",
  "serde",
  "serde_json",

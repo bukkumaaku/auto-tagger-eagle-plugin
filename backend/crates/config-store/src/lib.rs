@@ -22,12 +22,20 @@ const ENDPOINT_FIELD: &str = "endpoint";
 const API_KEY_FIELD: &str = "apiKey";
 const ENDPOINT_SECRET: &str = "config.endpoint";
 const API_KEY_SECRET: &str = "config.api-key";
+const LLM_ENDPOINT_FIELD: &str = "llmEndpoint";
+const LLM_API_KEY_FIELD: &str = "llmApiKey";
+const LLM_ENDPOINT_SECRET: &str = "config.llm-endpoint";
+const LLM_API_KEY_SECRET: &str = "config.llm-api-key";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Config {
     pub endpoint: String,
     pub api_key: String,
+    pub llm_provider: String,
+    pub llm_endpoint: String,
+    pub llm_api_key: String,
+    pub llm_remote_model: String,
     pub embedding_provider: String,
     pub embedding_dimension: u64,
     pub model_path: String,
@@ -63,6 +71,10 @@ impl Default for Config {
         Self {
             endpoint: String::new(),
             api_key: String::new(),
+            llm_provider: "local".to_string(),
+            llm_endpoint: String::new(),
+            llm_api_key: String::new(),
+            llm_remote_model: String::new(),
             embedding_provider: "open_ai".to_string(),
             embedding_dimension: 1_536,
             model_path: String::new(),
@@ -270,10 +282,12 @@ impl ConfigStore {
     }
 }
 
-fn sensitive_fields() -> [(&'static str, &'static str); 2] {
+fn sensitive_fields() -> [(&'static str, &'static str); 4] {
     [
         (ENDPOINT_FIELD, ENDPOINT_SECRET),
         (API_KEY_FIELD, API_KEY_SECRET),
+        (LLM_ENDPOINT_FIELD, LLM_ENDPOINT_SECRET),
+        (LLM_API_KEY_FIELD, LLM_API_KEY_SECRET),
     ]
 }
 

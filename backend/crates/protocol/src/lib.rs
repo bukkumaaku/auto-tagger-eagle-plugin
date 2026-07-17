@@ -354,6 +354,27 @@ pub struct LlamafileUnloadRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteVisionProvider {
+    OpenAi,
+    Gemini,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteVisionProcessImageRequest {
+    pub provider: RemoteVisionProvider,
+    pub endpoint: String,
+    #[serde(default)]
+    pub api_key: String,
+    pub model: String,
+    pub image_path: String,
+    pub instruction: String,
+    pub temperature: Option<f32>,
+    pub max_tokens: Option<usize>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum Command {
     Echo(EchoRequest),
@@ -387,6 +408,7 @@ pub enum Command {
     LlamafileLoad(LlamafileLoadRequest),
     LlamafileProcessImage(LlamafileProcessImageRequest),
     LlamafileUnload(LlamafileUnloadRequest),
+    RemoteVisionProcessImage(RemoteVisionProcessImageRequest),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -762,6 +784,15 @@ pub struct LlamafileUnloadResult {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RemoteVisionProcessImageResult {
+    pub provider: RemoteVisionProvider,
+    pub model: String,
+    pub image_path: String,
+    pub content: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ErrorPayload {
     pub code: String,
     pub message: String,
@@ -810,6 +841,7 @@ pub enum ResultPayload {
     LlamafileLoad(LlamafileLoadResult),
     LlamafileProcessImage(LlamafileProcessImageResult),
     LlamafileUnload(LlamafileUnloadResult),
+    RemoteVisionProcessImage(RemoteVisionProcessImageResult),
 }
 
 #[derive(Debug, Serialize, Deserialize)]

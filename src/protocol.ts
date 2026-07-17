@@ -19,6 +19,10 @@ export type Config = {
     [key: string]: string | number | boolean | string[];
     endpoint: string;
     apiKey: string;
+    llmProvider: "local" | "open_ai" | "gemini";
+    llmEndpoint: string;
+    llmApiKey: string;
+    llmRemoteModel: string;
     embeddingProvider: EmbeddingProvider;
     embeddingDimension: number;
     modelPath: string;
@@ -236,6 +240,8 @@ export type LlamafileProcessImageRequest = {
 export type LlamafileUnloadRequest = {
     sessionId: string;
 };
+export type RemoteVisionProvider = "open_ai" | "gemini";
+export type RemoteVisionProcessImageRequest = { provider: RemoteVisionProvider; endpoint: string; apiKey?: string; model: string; imagePath: string; instruction: string; temperature?: number; maxTokens?: number };
 
 export type CommandPayloadMap = {
     echo: EchoRequest;
@@ -268,6 +274,7 @@ export type CommandPayloadMap = {
     llamafile_load: LlamafileLoadRequest;
     llamafile_process_image: LlamafileProcessImageRequest;
     llamafile_unload: LlamafileUnloadRequest;
+    remote_vision_process_image: RemoteVisionProcessImageRequest;
 };
 
 export type CommandType = keyof CommandPayloadMap;
@@ -513,6 +520,7 @@ export type LlamafileUnloadResult = {
     sessionId: string;
     removed: boolean;
 };
+export type RemoteVisionProcessImageResult = { provider: RemoteVisionProvider; model: string; imagePath: string; content: string };
 
 export type ResultDataMap = {
     echo: EchoResult;
@@ -545,6 +553,7 @@ export type ResultDataMap = {
     llamafile_load: LlamafileLoadResult;
     llamafile_process_image: LlamafileProcessImageResult;
     llamafile_unload: LlamafileUnloadResult;
+    remote_vision_process_image: RemoteVisionProcessImageResult;
 };
 
 export type ResultKind = keyof ResultDataMap;

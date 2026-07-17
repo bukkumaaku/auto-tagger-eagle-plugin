@@ -69,6 +69,10 @@ import {
 
     type LlmFormData = {
         model: string;
+        llmProvider: "local" | "open_ai" | "gemini";
+        llmEndpoint: string;
+        llmApiKey: string;
+        llmRemoteModel: string;
         tagPrompt: string;
         annotationPrompt: string;
         overwrite: OverwriteMode;
@@ -151,6 +155,10 @@ import {
         );
         formData.value = {
             model: "",
+            llmProvider: config.llmProvider || "local",
+            llmEndpoint: config.llmEndpoint || "",
+            llmApiKey: config.llmApiKey || "",
+            llmRemoteModel: config.llmRemoteModel || "",
             tagPrompt:
                 config.llmTaggerPrompt || DEFAULT_LLM_TAG_PROMPT,
             annotationPrompt:
@@ -169,6 +177,10 @@ import {
     const persistForm = async () => {
         if (!isReady.value) return;
         config.llmModelPath = formData.value.model;
+        config.llmProvider = formData.value.llmProvider;
+        config.llmEndpoint = formData.value.llmEndpoint;
+        config.llmApiKey = formData.value.llmApiKey;
+        config.llmRemoteModel = formData.value.llmRemoteModel;
         config.llmTaggerPrompt = formData.value.tagPrompt;
         config.llmAnnotationPrompt = formData.value.annotationPrompt;
         config.llmOverwrite = formData.value.overwrite;
@@ -415,7 +427,7 @@ import {
             notification(t.value("model_download_window.process_checking"), "warning");
             return;
         }
-        if (!formData.value.model) {
+        if (formData.value.llmProvider === "local" && !formData.value.model) {
             notification(t.value("llm_tagger.select_model_notice"), "warning");
             return;
         }
@@ -438,7 +450,13 @@ import {
 
         const backend = getBackendClient();
         try {
-            const runtimePaths = await resolveRuntimePaths();
+            if (formData.value.llmProvider !== "local") {
+                if (!formData.value.llmEndpoint.trim() || !formData.value.llmRemoteModel.trim()) throw new Error("远程 LLM endpoint 和 model 不能为空");
+            }
+            const runtimePaths = formData.value.llmProvider === "local" ? await resolveRuntimePaths() : null;
+            if (!runtimePaths) { await persistForm(); }
+            if (!runtimePaths) { /* remote mode has no local model */ }
+            if (runtimePaths) {
             const runnerInfo = await backend.pathInfo(runtimePaths.llamafilePath);
             if (!runnerInfo.isFile) {
                 promptRunnerDownload();
@@ -450,6 +468,7 @@ import {
                 items,
             );
             await refreshBackups();
+            }
         } catch (error) {
             notification(
                 error instanceof Error ? error.message : String(error),
@@ -480,7 +499,7 @@ import {
             processingStage.value = "loading_model";
             updateTask(taskId, { detail: "正在加载模型" });
             await nextTick();
-            await ensureSession(backend);
+            if (formData.value.llmProvider === "local") await ensureSession(backend);
             processingStage.value =
                 mode === "tag" ? "tagging" : "annotating";
             updateTask(taskId, {
@@ -496,7 +515,7 @@ import {
                         continue;
                     }
                     const imagePath = await resolveImagePath(backend, item);
-                    const result = await backend.processImageWithLlamafile({
+                    const result = formData.value.llmProvider === "local" ? await backend.processImageWithLlamafile({
                         sessionId: LLAMAFILE_SESSION_ID,
                         imagePath,
                         instruction,
@@ -504,7 +523,7 @@ import {
                         temperature: Number(config.llmTemperature) || 0.5,
                         maxTokens: Number(config.llmMaxTokens) || 1024,
                         repetitionPenalty: 1.15,
-                    });
+                    }) : await backend.processImageWithRemoteVision({ provider: formData.value.llmProvider, endpoint: formData.value.llmEndpoint, apiKey: formData.value.llmApiKey, model: formData.value.llmRemoteModel, imagePath, instruction, temperature: Number(config.llmTemperature) || 0.5, maxTokens: Number(config.llmMaxTokens) || 1024 });
                     await writeResult(item.id, mode, result.content);
                 } catch (error) {
                     const message = error instanceof Error
@@ -604,6 +623,8 @@ import {
             </n-form-item>
 
             <n-form-item :label="t('llm_tagger.model')" path="model">
+                <n-form-item label="LLM Provider"><n-select v-model:value="formData.llmProvider" :options="[{ label: 'Local llamafile', value: 'local' }, { label: 'OpenAI compatible', value: 'open_ai' }, { label: 'Gemini REST', value: 'gemini' }]" :disabled="isProcessing" /></n-form-item>
+                <div v-if="formData.llmProvider !== 'local'" class="remote-llm-fields"><n-input v-model:value="formData.llmEndpoint" placeholder="Endpoint URL" :disabled="isProcessing" /><n-input v-model:value="formData.llmApiKey" type="password" placeholder="API key" :disabled="isProcessing" /><n-input v-model:value="formData.llmRemoteModel" placeholder="Remote model" :disabled="isProcessing" /></div>
                 <FormHelp :content="t('llm_tagger.model_desc')" />
                 <div class="model-row">
                     <n-select

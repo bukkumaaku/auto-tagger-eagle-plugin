@@ -13,12 +13,14 @@ csv = "1"
 downloader = { path = "crates/downloader" }
 futures-util = "0.3"
 gemini-embedding = { path = "crates/gemini-embedding" }
+gemini-vision = { path = "crates/gemini-vision" }
 image = { version = "0.25", default-features = false, features = ["bmp", "jpeg", "png", "webp"] }
 json5 = "0.4"
 keyring = { version = "3.6", default-features = false, features = ["apple-native", "windows-native"] }
 llamafile = { path = "crates/llamafile" }
 ndarray = "0.16"
 openai-embedding = { path = "crates/openai-embedding" }
+openai-vision = { path = "crates/openai-vision" }
 ort = "=2.0.0-rc.10"
 protocol = { path = "crates/protocol" }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "socks", "stream"] }

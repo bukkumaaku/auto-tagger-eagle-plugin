@@ -387,6 +387,7 @@ export class BackendClient {
     unloadLlamafile(sessionId: string): Promise<LlamafileUnloadResult> {
         return this.request("llamafile_unload", { sessionId });
     }
+    processImageWithRemoteVision(request: import("../protocol").RemoteVisionProcessImageRequest): Promise<import("../protocol").RemoteVisionProcessImageResult> { return this.request("remote_vision_process_image", request); }
 
     dispose() {
         this.lines?.close();

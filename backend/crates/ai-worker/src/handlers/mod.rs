@@ -8,6 +8,7 @@ pub mod embedding;
 pub mod llamafile;
 pub mod openai_embedding;
 pub mod path_info;
+pub mod remote_vision;
 pub mod scan_embedding_models;
 pub mod scan_wd_models;
 pub mod wd_tagger;
@@ -157,6 +158,9 @@ impl CommandHandler for BuiltinHandlers {
             }
             Command::LlamafileUnload(request) => {
                 llamafile::unload(request, &self.sessions).map(ResultPayload::LlamafileUnload)
+            }
+            Command::RemoteVisionProcessImage(request) => {
+                remote_vision::process_image(request).map(ResultPayload::RemoteVisionProcessImage)
             }
         }
     }
