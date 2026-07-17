@@ -444,13 +444,17 @@ import {
         await item.save();
     };
 
-    const processSelected = async (mode: PromptMode) => {
+    const processSelected = async (mode: PromptMode, targetItems?: any[], throwOnFailure = false) => {
         if (isProcessing.value || backenAPI.is_processing) {
-            notification(t.value("model_download_window.process_checking"), "warning");
+            const message = t.value("model_download_window.process_checking");
+            notification(message, "warning");
+            if (throwOnFailure) throw new Error(message);
             return;
         }
         if (formData.value.llmProvider === "local" && !formData.value.model) {
-            notification(t.value("llm_tagger.select_model_notice"), "warning");
+            const message = t.value("llm_tagger.select_model_notice");
+            notification(message, "warning");
+            if (throwOnFailure) throw new Error(message);
             return;
         }
 
@@ -459,14 +463,18 @@ import {
                 ? formData.value.tagPrompt.trim()
                 : formData.value.annotationPrompt.trim();
         if (!instruction) {
-            notification(t.value("llm_tagger.prompt_required"), "warning");
+            const message = t.value("llm_tagger.prompt_required");
+            notification(message, "warning");
             promptMode.value = mode;
+            if (throwOnFailure) throw new Error(message);
             return;
         }
 
-        const items = await eagle.item.getSelected();
+        const items = targetItems || await eagle.item.getSelected();
         if (items.length === 0) {
-            notification(t.value("llm_tagger.select_images_notice"), "warning");
+            const message = t.value("llm_tagger.select_images_notice");
+            notification(message, "warning");
+            if (throwOnFailure) throw new Error(message);
             return;
         }
 
@@ -482,6 +490,7 @@ import {
             const runnerInfo = await backend.pathInfo(runtimePaths.llamafilePath);
             if (!runnerInfo.isFile) {
                 promptRunnerDownload();
+                if (throwOnFailure) throw new Error("LLM 运行器尚未安装");
                 return;
             }
             await createTaggerBackup(
@@ -496,6 +505,7 @@ import {
                 error instanceof Error ? error.message : String(error),
                 "error",
             );
+            if (throwOnFailure) throw error;
             return;
         }
 
@@ -509,7 +519,10 @@ import {
             mode === "tag" ? "LLM 图片打标" : "LLM 写入注释",
             items.length,
         );
-        if (!taskId) return;
+        if (!taskId) {
+            if (throwOnFailure) throw new Error("无法启动 LLM 任务");
+            return;
+        }
         isProcessing.value = true;
         completedItems.value = 0;
         totalItems.value = items.length;
@@ -607,7 +620,13 @@ import {
                     : t.value("llm_tagger.annotation_done"),
             );
         }
+        if (throwOnFailure && failures.length > 0) throw new Error(failures.join("\n"));
     };
+    defineExpose({
+        ready: isReady,
+        runForItems: (items: any[], mode: PromptMode) =>
+            processSelected(mode, items, true),
+    });
 </script>
 
 <template>

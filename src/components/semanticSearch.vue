@@ -533,12 +533,12 @@
     }
     function toAnnotationInput(item: EagleImage): EmbeddingAnnotationInput { return { itemId: item.id, annotation: String(item.annotation || ""), updatedAt: Number(item.modifiedAt) || 0 }; }
 
-    async function startAnnotationIndexing() {
+    async function startAnnotationIndexing(targetItems?: EagleImage[]) {
         if (isIndexing.value || isTagIndexing.value || isAnnotationIndexing.value || isSearching.value) return;
         const taskId = beginTask("embedding", "全局注释向量化"); if (!taskId) return;
         isAnnotationIndexing.value = true; annotationIndexFailures.value = []; annotationIndexStatus.value = "正在加载模型";
         try {
-            await ensureSession(); const images = await getLibraryImages(); applyLibraryCounts(images);
+            await ensureSession(); const images = targetItems || await getLibraryImages(); applyLibraryCounts(images);
             annotationTotalItems.value = images.length; annotationProcessedItems.value = 0;
             const size = Math.max(20, batchSize.value * 4);
             for (let offset = 0; offset < images.length; offset += size) {
@@ -548,13 +548,13 @@
                 annotationIndexFailures.value.push(...result.failures.map((failure) => `${failure.itemId}：${failure.error}`));
                 updateTask(taskId, { detail: annotationIndexStatus.value, completed: annotationProcessedItems.value, total: images.length });
             }
-            const pruned = await getBackendClient().pruneEmbeddingAnnotations(SESSION_ID, images.map((image) => image.id)); annotationIndexedCount.value = pruned.totalAnnotations;
+            if (!targetItems) { const pruned = await getBackendClient().pruneEmbeddingAnnotations(SESSION_ID, images.map((image) => image.id)); annotationIndexedCount.value = pruned.totalAnnotations; }
             annotationIndexStatus.value = annotationIndexFailures.value.length ? "完成，部分注释失败" : "注释索引完成"; completeTask(taskId, annotationIndexStatus.value);
         } catch (error) { annotationIndexStatus.value = "注释索引失败"; failTask(taskId, error); notification(errorMessage(error), "error"); }
         finally { isAnnotationIndexing.value = false; }
     }
 
-    async function startIndexing() {
+    async function startIndexing(targetItems?: EagleImage[]) {
         if (isTagIndexing.value) return;
         if (isIndexing.value) {
             if (isPaused.value) resumeIndexing();
@@ -570,16 +570,12 @@
         try {
             updateTask(taskId, { detail: "正在加载模型" });
             await ensureSession();
-            const images = await getLibraryImages();
+            const images = targetItems || await getLibraryImages();
             applyLibraryCounts(images);
             if (images.length === 0) {
                 throw new Error("没有找到可索引的图片，已保留现有索引");
             }
-            const pruneResult = await getBackendClient().pruneEmbedding(
-                SESSION_ID,
-                images.map((image) => image.id),
-            );
-            indexedCount.value = pruneResult.totalIndexed;
+            if (!targetItems) { const pruneResult = await getBackendClient().pruneEmbedding(SESSION_ID, images.map((image) => image.id)); indexedCount.value = pruneResult.totalIndexed; }
             totalImages.value = images.length;
             updateTask(taskId, {
                 detail: "正在建立索引",
@@ -653,7 +649,7 @@
         }
     }
 
-    async function startTagIndexing() {
+    async function startTagIndexing(targetItems?: EagleImage[]) {
         if (isIndexing.value || isTagIndexing.value || isAnnotationIndexing.value || isSearching.value) return;
         if (backenAPI.is_processing) {
             notification("另一个任务正在运行", "warning");
@@ -666,7 +662,7 @@
         tagIndexStatus.value = "正在加载模型";
         try {
             await ensureSession();
-            const images = await getLibraryImages();
+            const images = targetItems || await getLibraryImages();
             applyLibraryCounts(images);
             if (images.length === 0) throw new Error("没有找到可处理的图片");
             tagTotalItems.value = images.length;
@@ -697,12 +693,7 @@
                     completed: tagProcessedItems.value,
                 });
             }
-            const pruned = await getBackendClient().pruneEmbeddingTags(
-                SESSION_ID,
-                images.map((image) => image.id),
-            );
-            tagIndexedCount.value = pruned.totalTags;
-            tagLinkCount.value = pruned.totalLinks;
+            if (!targetItems) { const pruned = await getBackendClient().pruneEmbeddingTags(SESSION_ID, images.map((image) => image.id)); tagIndexedCount.value = pruned.totalTags; tagLinkCount.value = pruned.totalLinks; }
             tagIndexStatus.value = tagIndexFailures.value.length
                 ? "完成，部分标签失败"
                 : "标签索引完成";
@@ -1067,6 +1058,47 @@
     function delay(milliseconds: number) {
         return new Promise((resolve) => setTimeout(resolve, milliseconds));
     }
+    async function runImageIndexing(items: EagleImage[]) {
+        await startIndexing(items);
+        if (indexStatus.value === "索引失败") throw new Error(indexStatus.value);
+        if (indexFailures.value.length > 0) {
+            throw new Error(`${indexFailures.value.length} 张图片向量化失败`);
+        }
+        if (processedImages.value < items.length) {
+            throw new Error("图片向量化任务未完整执行");
+        }
+    }
+
+    async function runTagIndexing(items: EagleImage[]) {
+        await startTagIndexing(items);
+        if (tagIndexStatus.value === "标签索引失败") throw new Error(tagIndexStatus.value);
+        if (tagIndexFailures.value.length > 0) {
+            throw new Error(`${tagIndexFailures.value.length} 个标签向量化失败`);
+        }
+        if (tagProcessedItems.value < items.length) {
+            throw new Error("标签向量化任务未完整执行");
+        }
+    }
+
+    async function runAnnotationIndexing(items: EagleImage[]) {
+        await startAnnotationIndexing(items);
+        if (annotationIndexStatus.value === "注释索引失败") {
+            throw new Error(annotationIndexStatus.value);
+        }
+        if (annotationIndexFailures.value.length > 0) {
+            throw new Error(`${annotationIndexFailures.value.length} 条注释向量化失败`);
+        }
+        if (annotationProcessedItems.value < items.length) {
+            throw new Error("注释向量化任务未完整执行");
+        }
+    }
+
+    defineExpose({
+        ready: isReady,
+        runImageIndexing,
+        runTagIndexing,
+        runAnnotationIndexing,
+    });
 </script>
 
 <template>
@@ -1181,7 +1213,7 @@
                                 v-if="!isIndexing || isPaused"
                                 type="primary"
                                 :disabled="!selectedModel"
-                                @click="startIndexing"
+                                @click="() => startIndexing()"
                             >
                                 <template #icon>
                                     <n-icon><PlayOutline /></n-icon>
@@ -1296,7 +1328,7 @@
                             type="primary"
                             :loading="isTagIndexing"
                             :disabled="!selectedModel || isIndexing || isSearching"
-                            @click="startTagIndexing"
+                            @click="() => startTagIndexing()"
                         >
                             <template #icon>
                                 <n-icon><PricetagsOutline /></n-icon>
@@ -1326,7 +1358,7 @@
                         <div class="metric metric--red"><span>失败</span><strong>{{ annotationIndexFailures.length }}</strong></div>
                     </div>
                     <div class="progress-block"><div class="progress-heading"><span>{{ annotationIndexStatus }}</span><span>{{ annotationProcessedItems }}/{{ annotationTotalItems }}</span></div><n-progress type="line" :percentage="annotationIndexPercentage" :processing="isAnnotationIndexing" indicator-placement="inside" /></div>
-                    <div class="index-actions"><span class="field-label">每张图片最多建立一条注释向量</span><n-button type="primary" :loading="isAnnotationIndexing" :disabled="!selectedModel || isIndexing || isTagIndexing || isSearching" @click="startAnnotationIndexing"><template #icon><n-icon><InformationCircleOutline /></n-icon></template>{{ isAnnotationIndexing ? "正在向量化" : "开始注释向量化" }}</n-button></div>
+                    <div class="index-actions"><span class="field-label">每张图片最多建立一条注释向量</span><n-button type="primary" :loading="isAnnotationIndexing" :disabled="!selectedModel || isIndexing || isTagIndexing || isSearching" @click="() => startAnnotationIndexing()"><template #icon><n-icon><InformationCircleOutline /></n-icon></template>{{ isAnnotationIndexing ? "正在向量化" : "开始注释向量化" }}</n-button></div>
                     <n-alert v-if="annotationIndexFailures.length" title="未能处理的注释" type="warning" class="failure-alert"><div v-for="failure in annotationIndexFailures.slice(0, 8)" :key="failure">{{ failure }}</div></n-alert>
                 </section>
             </n-tab-pane>

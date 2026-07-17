@@ -152,15 +152,23 @@ import {
     onMounted(initializePage);
     onBeforeUnmount(stopRefreshTimer);
     // 提交处理
-    const handleSubmit = async (isAll = false) => {
+    const handleSubmit = async (
+        isAll = false,
+        targetItems?: any[],
+        throwOnFailure = false,
+    ) => {
         if (formData.value?.modelPath === "") {
-            notification(
-                t.value("model_download_window.select_model_location_notice"),
+            const message = t.value(
+                "model_download_window.select_model_location_notice",
             );
+            notification(message);
+            if (throwOnFailure) throw new Error(message);
             return;
         }
         if (isTagging.value || backenAPI.is_processing) {
-            notification(t.value("model_download_window.process_checking"));
+            const message = t.value("model_download_window.process_checking");
+            notification(message);
+            if (throwOnFailure) throw new Error(message);
             return;
         }
         const startedTask = beginTask("wd", "WD 批量打标");
@@ -168,10 +176,11 @@ import {
         taskId.value = startedTask;
         isTagging.value = true;
         stopRefreshTimer();
+        let workflowError: unknown;
         try {
             formData2Config();
             await backenAPI.setConfig();
-            const items = await backenAPI.initialize(isAll);
+            const items = targetItems || await backenAPI.initialize(isAll);
             const model = await resolveSelectedModel();
             if (!model) throw new Error("无法定位当前 WD 模型目录，已取消打标");
             await createTaggerBackup(model.modelPath, "wd", items);
@@ -183,6 +192,9 @@ import {
                 total: items.length,
             });
             const result = await backenAPI.startGetTag(items);
+            if (throwOnFailure && result.failureCount > 0) {
+                throw new Error(`WD 打标有 ${result.failureCount} 个项目失败`);
+            }
             completeTask(
                 startedTask,
                 result.failureCount > 0
@@ -190,6 +202,7 @@ import {
                     : "打标完成",
             );
         } catch (error) {
+            workflowError = error;
             failTask(startedTask, error);
             notification(
                 error instanceof Error ? error.message : String(error),
@@ -201,6 +214,7 @@ import {
             await refreshItemCount();
             startRefreshTimer();
         }
+        if (throwOnFailure && workflowError) throw workflowError;
     };
     // 重置表单
     const handleReset = () => {
@@ -277,6 +291,10 @@ import {
         () => formData.value.modelPath,
         () => void refreshBackups(),
     );
+    defineExpose({
+        ready: isReady,
+        runForItems: (items: any[]) => handleSubmit(false, items, true),
+    });
 </script>
 
 <template>
