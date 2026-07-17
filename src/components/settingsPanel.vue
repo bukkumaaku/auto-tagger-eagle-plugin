@@ -14,6 +14,7 @@
     import { DEFAULT_GEMINI_EMBEDDING_MODEL } from "../constants/embedding";
     import downloadModal from "./downloadModal.vue";
     import FormHelp from "./formHelp.vue";
+    import type { RemoteEmbeddingProfile } from "../protocol";
 
     type SettingsFormData = {
         modelLocation: string;
@@ -23,6 +24,8 @@
         embeddingModelName: string;
         embeddingProvider: "open_ai" | "gemini";
         embeddingDimension: number;
+        embeddingRemoteProfiles: RemoteEmbeddingProfile[];
+        embeddingRemoteProfileId: string;
     };
 
     const defaultFormData: SettingsFormData = {
@@ -33,11 +36,11 @@
         embeddingModelName: "",
         embeddingProvider: "open_ai",
         embeddingDimension: 1536,
+        embeddingRemoteProfiles: [],
+        embeddingRemoteProfileId: "",
     };
 
-    const cloneFormData = (value: SettingsFormData): SettingsFormData => ({
-        ...value,
-    });
+    const cloneFormData = (value: SettingsFormData): SettingsFormData => ({ ...value, embeddingRemoteProfiles: value.embeddingRemoteProfiles.map((profile) => ({ ...profile })) });
 
     let originalConfig: SettingsFormData = cloneFormData(defaultFormData);
     const formData: Ref<SettingsFormData> = ref(cloneFormData(defaultFormData));
@@ -56,9 +59,19 @@
                 ]),
             ),
         } as SettingsFormData;
+        if (!formData.value.embeddingRemoteProfileId) formData.value.embeddingRemoteProfileId = formData.value.embeddingRemoteProfiles[0]?.id || "";
+        if (formData.value.embeddingRemoteProfiles.length === 0 && formData.value.endpoint && formData.value.embeddingModelName) addRemoteProfile(false);
+        loadActiveProfile();
     };
 
+    const activeProfile = () => formData.value.embeddingRemoteProfiles.find((profile) => profile.id === formData.value.embeddingRemoteProfileId);
+    const loadActiveProfile = () => { const profile = activeProfile(); if (!profile) return; formData.value.embeddingProvider = profile.provider; formData.value.endpoint = profile.endpoint; formData.value.apiKey = profile.apiKey; formData.value.embeddingModelName = profile.model; formData.value.embeddingDimension = profile.dimension || 1536; };
+    const addRemoteProfile = (select = true) => { const id = `embedding-${Date.now()}-${Math.random().toString(16).slice(2)}`; formData.value.embeddingRemoteProfiles.push({ id, name: `远程接口 ${formData.value.embeddingRemoteProfiles.length + 1}`, provider: formData.value.embeddingProvider, endpoint: formData.value.endpoint, apiKey: formData.value.apiKey, model: formData.value.embeddingModelName, dimension: formData.value.embeddingDimension }); formData.value.embeddingRemoteProfileId = id; if (select) loadActiveProfile(); };
+    const removeRemoteProfile = () => { const id = formData.value.embeddingRemoteProfileId; formData.value.embeddingRemoteProfiles = formData.value.embeddingRemoteProfiles.filter((profile) => profile.id !== id); formData.value.embeddingRemoteProfileId = formData.value.embeddingRemoteProfiles[0]?.id || ""; loadActiveProfile(); };
+    const updateActiveProfile = () => { const profile = activeProfile(); if (!profile) return; Object.assign(profile, { provider: formData.value.embeddingProvider, endpoint: formData.value.endpoint, apiKey: formData.value.apiKey, model: formData.value.embeddingModelName, dimension: formData.value.embeddingDimension }); };
+
     const syncFormToConfig = async () => {
+        updateActiveProfile();
         Object.entries(formData.value).forEach(([key, value]) => {
             config[key] = value;
         });
@@ -96,6 +109,7 @@
         },
         { deep: true },
     );
+    watch(() => formData.value.embeddingRemoteProfileId, loadActiveProfile);
 
     watch(
         () => formData.value.embeddingProvider,
@@ -198,6 +212,19 @@
                 </template>
                 {{ t("settings.download_llamafile") }}
             </n-button>
+        </n-form-item>
+
+        <n-form-item
+            :label="t('settings.embedding_provider')"
+            path="embeddingProvider"
+        >
+            <n-select v-model:value="formData.embeddingRemoteProfileId" :options="formData.embeddingRemoteProfiles.map((profile) => ({ label: profile.name || profile.model || profile.endpoint, value: profile.id }))" placeholder="选择远程接口" />
+            <n-button @click="addRemoteProfile()">新增</n-button>
+            <n-button :disabled="!formData.embeddingRemoteProfileId" @click="removeRemoteProfile">删除</n-button>
+        </n-form-item>
+
+        <n-form-item label="接口名称">
+            <n-input v-if="activeProfile()" v-model:value="activeProfile()!.name" placeholder="例如：主站、备用中转站" />
         </n-form-item>
 
         <n-form-item

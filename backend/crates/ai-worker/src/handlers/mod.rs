@@ -108,11 +108,19 @@ impl CommandHandler for BuiltinHandlers {
             }
             Command::EmbeddingIndexTags(request) => embedding::index_tags(request, &self.sessions)
                 .map(ResultPayload::EmbeddingIndexTags),
+            Command::EmbeddingIndexAnnotations(request) => {
+                embedding::index_annotations(request, &self.sessions)
+                    .map(ResultPayload::EmbeddingIndexAnnotations)
+            }
             Command::EmbeddingPrune(request) => {
                 embedding::prune(request, &self.sessions).map(ResultPayload::EmbeddingPrune)
             }
             Command::EmbeddingPruneTags(request) => embedding::prune_tags(request, &self.sessions)
                 .map(ResultPayload::EmbeddingPruneTags),
+            Command::EmbeddingPruneAnnotations(request) => {
+                embedding::prune_annotations(request, &self.sessions)
+                    .map(ResultPayload::EmbeddingPruneAnnotations)
+            }
             Command::EmbeddingHealth(request) => {
                 embedding::health(request, &self.sessions).map(ResultPayload::EmbeddingHealth)
             }

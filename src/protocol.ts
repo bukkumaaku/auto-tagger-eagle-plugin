@@ -15,8 +15,10 @@ export type DownloadFileRequest = {
     destination: string;
 };
 
+export type RemoteEmbeddingProfile = { id: string; name: string; provider: "open_ai" | "gemini"; endpoint: string; apiKey: string; model: string; dimension: number };
+export type RemoteLlmProfile = { id: string; name: string; provider: "open_ai" | "gemini"; endpoint: string; apiKey: string; model: string };
 export type Config = {
-    [key: string]: string | number | boolean | string[];
+    [key: string]: string | number | boolean | string[] | RemoteEmbeddingProfile[] | RemoteLlmProfile[];
     endpoint: string;
     apiKey: string;
     llmProvider: "local" | "open_ai" | "gemini";
@@ -25,6 +27,10 @@ export type Config = {
     llmRemoteModel: string;
     embeddingProvider: EmbeddingProvider;
     embeddingDimension: number;
+    embeddingRemoteProfiles: RemoteEmbeddingProfile[];
+    embeddingRemoteProfileId: string;
+    llmRemoteProfiles: RemoteLlmProfile[];
+    llmRemoteProfileId: string;
     modelPath: string;
     threshold: number;
     steps: number;
@@ -114,6 +120,7 @@ export type EmbeddingTagInput = {
     itemId: string;
     tags: string[];
 };
+export type EmbeddingAnnotationInput = { itemId: string; annotation: string; updatedAt: number };
 
 export type EmbeddingIndexBatchRequest = {
     sessionId: string;
@@ -125,6 +132,7 @@ export type EmbeddingIndexTagsRequest = {
     items: EmbeddingTagInput[];
     concurrency: number;
 };
+export type EmbeddingIndexAnnotationsRequest = { sessionId: string; items: EmbeddingAnnotationInput[]; concurrency: number };
 
 export type EmbeddingPruneRequest = {
     sessionId: string;
@@ -135,6 +143,7 @@ export type EmbeddingPruneTagsRequest = {
     sessionId: string;
     itemIds: string[];
 };
+export type EmbeddingPruneAnnotationsRequest = { sessionId: string; itemIds: string[] };
 
 export type EmbeddingHealthRequest = {
     sessionId: string;
@@ -154,6 +163,7 @@ export type EmbeddingSearchTextRequest = {
     text: string;
     topK: number;
     includeTags?: boolean;
+    includeAnnotations?: boolean;
 };
 
 export type EmbeddingSearchImageRequest = {
@@ -260,8 +270,10 @@ export type CommandPayloadMap = {
     embedding_load: EmbeddingLoadRequest;
     embedding_index_batch: EmbeddingIndexBatchRequest;
     embedding_index_tags: EmbeddingIndexTagsRequest;
+    embedding_index_annotations: EmbeddingIndexAnnotationsRequest;
     embedding_prune: EmbeddingPruneRequest;
     embedding_prune_tags: EmbeddingPruneTagsRequest;
+    embedding_prune_annotations: EmbeddingPruneAnnotationsRequest;
     embedding_health: EmbeddingHealthRequest;
     embedding_status: EmbeddingStatusRequest;
     embedding_search_text: EmbeddingSearchTextRequest;
@@ -363,6 +375,8 @@ export type EmbeddingLoadResult = {
     tagDocumentCount: number;
     tagIndexedCount: number;
     tagLinkCount: number;
+    annotationDocumentCount: number;
+    annotationIndexedCount: number;
     reused: boolean;
 };
 
@@ -398,6 +412,8 @@ export type EmbeddingIndexTagsResult = {
     totalLinks: number;
     failures: EmbeddingTagFailure[];
 };
+export type EmbeddingAnnotationFailure = { itemId: string; error: string };
+export type EmbeddingIndexAnnotationsResult = { sessionId: string; indexedAnnotations: number; skippedAnnotations: number; totalAnnotations: number; failures: EmbeddingAnnotationFailure[] };
 
 export type EmbeddingPruneResult = {
     sessionId: string;
@@ -411,6 +427,7 @@ export type EmbeddingPruneTagsResult = {
     totalTags: number;
     totalLinks: number;
 };
+export type EmbeddingPruneAnnotationsResult = { sessionId: string; removedAnnotations: number; totalAnnotations: number };
 
 export type EmbeddingHealthItem = {
     itemId: string;
@@ -433,6 +450,8 @@ export type EmbeddingStatusResult = {
     tagDocumentCount: number;
     tagIndexedCount: number;
     tagLinkCount: number;
+    annotationDocumentCount: number;
+    annotationIndexedCount: number;
 };
 
 export type EmbeddingSearchHit = {
@@ -539,8 +558,10 @@ export type ResultDataMap = {
     embedding_load: EmbeddingLoadResult;
     embedding_index_batch: EmbeddingIndexBatchResult;
     embedding_index_tags: EmbeddingIndexTagsResult;
+    embedding_index_annotations: EmbeddingIndexAnnotationsResult;
     embedding_prune: EmbeddingPruneResult;
     embedding_prune_tags: EmbeddingPruneTagsResult;
+    embedding_prune_annotations: EmbeddingPruneAnnotationsResult;
     embedding_health: EmbeddingHealthResult;
     embedding_status: EmbeddingStatusResult;
     embedding_search_text: EmbeddingSearchResult;

@@ -241,10 +241,12 @@ export class BackendClient {
             concurrency,
         });
     }
+    indexEmbeddingAnnotations(sessionId: string, items: import("../protocol").EmbeddingAnnotationInput[], concurrency: number): Promise<import("../protocol").EmbeddingIndexAnnotationsResult> { return this.request("embedding_index_annotations", { sessionId, items, concurrency }); }
 
     pruneEmbeddingTags(sessionId: string, itemIds: string[]): Promise<EmbeddingPruneTagsResult> {
         return this.request("embedding_prune_tags", { sessionId, itemIds });
     }
+    pruneEmbeddingAnnotations(sessionId: string, itemIds: string[]): Promise<import("../protocol").EmbeddingPruneAnnotationsResult> { return this.request("embedding_prune_annotations", { sessionId, itemIds }); }
 
     pruneEmbedding(
         sessionId: string,
@@ -277,12 +279,14 @@ export class BackendClient {
         text: string,
         topK: number,
         includeTags = false,
+        includeAnnotations = false,
     ): Promise<EmbeddingSearchResult> {
         return this.request("embedding_search_text", {
             sessionId,
             text,
             topK,
             includeTags,
+            includeAnnotations,
         });
     }
 

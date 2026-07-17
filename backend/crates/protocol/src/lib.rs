@@ -143,6 +143,16 @@ pub struct EmbeddingTagInput {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct EmbeddingAnnotationInput {
+    pub item_id: String,
+    #[serde(default)]
+    pub annotation: String,
+    #[serde(default)]
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EmbeddingIndexBatchRequest {
     pub session_id: String,
     pub images: Vec<EmbeddingImageInput>,
@@ -159,6 +169,15 @@ pub struct EmbeddingIndexTagsRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct EmbeddingIndexAnnotationsRequest {
+    pub session_id: String,
+    pub items: Vec<EmbeddingAnnotationInput>,
+    #[serde(default)]
+    pub concurrency: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EmbeddingPruneRequest {
     pub session_id: String,
     pub item_ids: Vec<String>,
@@ -167,6 +186,14 @@ pub struct EmbeddingPruneRequest {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EmbeddingPruneTagsRequest {
+    pub session_id: String,
+    #[serde(default)]
+    pub item_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmbeddingPruneAnnotationsRequest {
     pub session_id: String,
     #[serde(default)]
     pub item_ids: Vec<String>,
@@ -201,6 +228,8 @@ pub struct EmbeddingSearchTextRequest {
     pub top_k: usize,
     #[serde(default)]
     pub include_tags: bool,
+    #[serde(default)]
+    pub include_annotations: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -394,8 +423,10 @@ pub enum Command {
     EmbeddingLoad(EmbeddingLoadRequest),
     EmbeddingIndexBatch(EmbeddingIndexBatchRequest),
     EmbeddingIndexTags(EmbeddingIndexTagsRequest),
+    EmbeddingIndexAnnotations(EmbeddingIndexAnnotationsRequest),
     EmbeddingPrune(EmbeddingPruneRequest),
     EmbeddingPruneTags(EmbeddingPruneTagsRequest),
+    EmbeddingPruneAnnotations(EmbeddingPruneAnnotationsRequest),
     EmbeddingHealth(EmbeddingHealthRequest),
     EmbeddingStatus(EmbeddingStatusRequest),
     EmbeddingSearchText(EmbeddingSearchTextRequest),
@@ -532,6 +563,8 @@ pub struct EmbeddingLoadResult {
     pub tag_document_count: u64,
     pub tag_indexed_count: u64,
     pub tag_link_count: u64,
+    pub annotation_document_count: u64,
+    pub annotation_indexed_count: u64,
     pub reused: bool,
 }
 
@@ -600,6 +633,23 @@ pub struct EmbeddingIndexTagsResult {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct EmbeddingAnnotationFailure {
+    pub item_id: String,
+    pub error: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmbeddingIndexAnnotationsResult {
+    pub session_id: String,
+    pub indexed_annotations: u64,
+    pub skipped_annotations: u64,
+    pub total_annotations: u64,
+    pub failures: Vec<EmbeddingAnnotationFailure>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EmbeddingPruneResult {
     pub session_id: String,
     pub removed_count: u64,
@@ -613,6 +663,14 @@ pub struct EmbeddingPruneTagsResult {
     pub removed_tags: u64,
     pub total_tags: u64,
     pub total_links: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmbeddingPruneAnnotationsResult {
+    pub session_id: String,
+    pub removed_annotations: u64,
+    pub total_annotations: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -642,6 +700,8 @@ pub struct EmbeddingStatusResult {
     pub tag_document_count: u64,
     pub tag_indexed_count: u64,
     pub tag_link_count: u64,
+    pub annotation_document_count: u64,
+    pub annotation_indexed_count: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -827,8 +887,10 @@ pub enum ResultPayload {
     EmbeddingLoad(EmbeddingLoadResult),
     EmbeddingIndexBatch(EmbeddingIndexBatchResult),
     EmbeddingIndexTags(EmbeddingIndexTagsResult),
+    EmbeddingIndexAnnotations(EmbeddingIndexAnnotationsResult),
     EmbeddingPrune(EmbeddingPruneResult),
     EmbeddingPruneTags(EmbeddingPruneTagsResult),
+    EmbeddingPruneAnnotations(EmbeddingPruneAnnotationsResult),
     EmbeddingHealth(EmbeddingHealthResult),
     EmbeddingStatus(EmbeddingStatusResult),
     EmbeddingSearchText(EmbeddingSearchResult),

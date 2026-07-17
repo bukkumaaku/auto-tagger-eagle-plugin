@@ -27,6 +27,29 @@ const LLM_API_KEY_FIELD: &str = "llmApiKey";
 const LLM_ENDPOINT_SECRET: &str = "config.llm-endpoint";
 const LLM_API_KEY_SECRET: &str = "config.llm-api-key";
 
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct RemoteEmbeddingProfile {
+    pub id: String,
+    pub name: String,
+    pub provider: String,
+    pub endpoint: String,
+    pub api_key: String,
+    pub model: String,
+    pub dimension: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct RemoteLlmProfile {
+    pub id: String,
+    pub name: String,
+    pub provider: String,
+    pub endpoint: String,
+    pub api_key: String,
+    pub model: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Config {
@@ -38,6 +61,10 @@ pub struct Config {
     pub llm_remote_model: String,
     pub embedding_provider: String,
     pub embedding_dimension: u64,
+    pub embedding_remote_profiles: Vec<RemoteEmbeddingProfile>,
+    pub embedding_remote_profile_id: String,
+    pub llm_remote_profiles: Vec<RemoteLlmProfile>,
+    pub llm_remote_profile_id: String,
     pub model_path: String,
     pub threshold: f64,
     pub steps: u64,
@@ -77,6 +104,10 @@ impl Default for Config {
             llm_remote_model: String::new(),
             embedding_provider: "open_ai".to_string(),
             embedding_dimension: 1_536,
+            embedding_remote_profiles: Vec::new(),
+            embedding_remote_profile_id: String::new(),
+            llm_remote_profiles: Vec::new(),
+            llm_remote_profile_id: String::new(),
             model_path: String::new(),
             threshold: 0.25,
             steps: 1,

@@ -13,13 +13,16 @@ use gemini_embedding::{
 };
 use openai_embedding::{ClientConfig, EmbeddingRequest, OpenAiEmbeddingClient};
 use protocol::{
-    EmbeddingExecutionProvider, EmbeddingHealthItem, EmbeddingHealthRequest, EmbeddingHealthResult,
-    EmbeddingImageFailure, EmbeddingIndexBatchRequest, EmbeddingIndexBatchResult,
-    EmbeddingIndexTagsRequest, EmbeddingIndexTagsResult, EmbeddingLoadRequest, EmbeddingLoadResult,
-    EmbeddingProvider, EmbeddingPruneRequest, EmbeddingPruneResult, EmbeddingPruneTagsRequest,
-    EmbeddingPruneTagsResult, EmbeddingSearchHit, EmbeddingSearchImageRequest,
-    EmbeddingSearchResult, EmbeddingSearchTextRequest, EmbeddingStatusRequest,
-    EmbeddingStatusResult, EmbeddingTagFailure, EmbeddingUnloadRequest, EmbeddingUnloadResult,
+    EmbeddingAnnotationFailure, EmbeddingExecutionProvider, EmbeddingHealthItem,
+    EmbeddingHealthRequest, EmbeddingHealthResult, EmbeddingImageFailure,
+    EmbeddingIndexAnnotationsRequest, EmbeddingIndexAnnotationsResult, EmbeddingIndexBatchRequest,
+    EmbeddingIndexBatchResult, EmbeddingIndexTagsRequest, EmbeddingIndexTagsResult,
+    EmbeddingLoadRequest, EmbeddingLoadResult, EmbeddingProvider, EmbeddingPruneAnnotationsRequest,
+    EmbeddingPruneAnnotationsResult, EmbeddingPruneRequest, EmbeddingPruneResult,
+    EmbeddingPruneTagsRequest, EmbeddingPruneTagsResult, EmbeddingSearchHit,
+    EmbeddingSearchImageRequest, EmbeddingSearchResult, EmbeddingSearchTextRequest,
+    EmbeddingStatusRequest, EmbeddingStatusResult, EmbeddingTagFailure, EmbeddingUnloadRequest,
+    EmbeddingUnloadResult,
 };
 use serde_json::json;
 use text_vector_store::{TextDocumentRecord, TextVectorRecord, TextVectorStore};
@@ -56,7 +59,8 @@ struct EmbeddingSession {
     settings: EmbeddingSessionSettings,
     engine: EmbeddingEngine,
     store: VectorStore,
-    text_store: TextVectorStore,
+    tag_store: TextVectorStore,
+    annotation_store: TextVectorStore,
 }
 
 enum EmbeddingEngine {
@@ -130,6 +134,8 @@ pub fn load(
             tag_document_count: tag_document_count(&session)?,
             tag_indexed_count: tag_indexed_count(&session)?,
             tag_link_count: tag_link_count(&session)?,
+            annotation_document_count: annotation_document_count(&session)?,
+            annotation_indexed_count: annotation_indexed_count(&session)?,
             reused: true,
         });
     }
@@ -145,6 +151,8 @@ pub fn load(
         tag_document_count: tag_document_count(&session)?,
         tag_indexed_count: tag_indexed_count(&session)?,
         tag_link_count: tag_link_count(&session)?,
+        annotation_document_count: annotation_document_count(&session)?,
+        annotation_indexed_count: annotation_indexed_count(&session)?,
         reused: false,
     })
 }
@@ -157,7 +165,6 @@ pub fn index_batch(
     let handle = embedding_session(sessions, &request.session_id)?;
     let mut session = handle.lock().map_err(session_error)?;
     let namespace = session.settings.namespace.clone();
-    let requested_images = request.images.clone();
     let mut skipped_ids = Vec::new();
     let mut failures = Vec::new();
     let mut pending = Vec::new();
@@ -256,14 +263,6 @@ pub fn index_batch(
         })
         .collect::<Vec<_>>();
     session.store.upsert_many(&records).map_err(store_error)?;
-    sync_annotation_embeddings(
-        &mut session,
-        &namespace,
-        &requested_images,
-        &indexed_ids,
-        &skipped_ids,
-        &mut failures,
-    )?;
     let total_indexed = indexed_count(&session)?;
 
     Ok(EmbeddingIndexBatchResult {
@@ -315,11 +314,11 @@ pub fn index_tags(
             updated_at: 0,
         };
         session
-            .text_store
+            .tag_store
             .upsert_document(&document)
             .map_err(store_error)?;
         if session
-            .text_store
+            .tag_store
             .needs_embedding(&namespace, "tag", tag, tag)
             .map_err(store_error)?
         {
@@ -341,7 +340,7 @@ pub fn index_tags(
         match result {
             Ok(embedding) => {
                 session
-                    .text_store
+                    .tag_store
                     .upsert(&TextVectorRecord {
                         document: document.clone(),
                         embedding,
@@ -358,7 +357,7 @@ pub fn index_tags(
 
     for (item_id, tags) in links {
         session
-            .text_store
+            .tag_store
             .replace_item_links(&namespace, "tag", &item_id, &tags)
             .map_err(store_error)?;
     }
@@ -392,12 +391,12 @@ pub fn prune_tags(
         .collect::<HashSet<_>>();
     if !keep_item_ids.is_empty() {
         session
-            .text_store
+            .tag_store
             .prune_item_links(&namespace, "tag", &keep_item_ids)
             .map_err(store_error)?;
     }
     let removed_tags = session
-        .text_store
+        .tag_store
         .prune_unlinked_documents(&namespace, "tag")
         .map_err(store_error)?;
     Ok(EmbeddingPruneTagsResult {
@@ -405,6 +404,125 @@ pub fn prune_tags(
         removed_tags,
         total_tags: tag_indexed_count(&session)?,
         total_links: tag_link_count(&session)?,
+    })
+}
+
+pub fn index_annotations(
+    request: EmbeddingIndexAnnotationsRequest,
+    sessions: &SessionManager,
+) -> HandlerResult<EmbeddingIndexAnnotationsResult> {
+    validate_session_id(&request.session_id)?;
+    let handle = embedding_session(sessions, &request.session_id)?;
+    let mut session = handle.lock().map_err(session_error)?;
+    let namespace = session.settings.namespace.clone();
+    let mut pending = Vec::new();
+    let mut skipped_annotations = 0_u64;
+    for item in request.items {
+        if item.item_id.trim().is_empty() {
+            continue;
+        }
+        let content = item.annotation.trim();
+        if content.is_empty() {
+            session
+                .annotation_store
+                .delete_document(&namespace, "annotation", &item.item_id)
+                .map_err(store_error)?;
+            skipped_annotations += 1;
+            continue;
+        }
+        let needs = session
+            .annotation_store
+            .needs_embedding(&namespace, "annotation", &item.item_id, content)
+            .map_err(store_error)?;
+        let document = TextDocumentRecord {
+            namespace: namespace.clone(),
+            kind: "annotation".to_string(),
+            document_id: item.item_id.clone(),
+            content: content.to_string(),
+            updated_at: item.updated_at,
+        };
+        session
+            .annotation_store
+            .upsert_document(&document)
+            .map_err(store_error)?;
+        session
+            .annotation_store
+            .replace_item_links(
+                &namespace,
+                "annotation",
+                &item.item_id,
+                &[item.item_id.clone()],
+            )
+            .map_err(store_error)?;
+        if needs {
+            pending.push(document);
+        } else {
+            skipped_annotations += 1;
+        }
+    }
+    let texts = pending
+        .iter()
+        .map(|document| document.content.clone())
+        .collect::<Vec<_>>();
+    let mut indexed_annotations = 0_u64;
+    let mut failures = Vec::new();
+    for (document, result) in pending
+        .into_iter()
+        .zip(session.engine.embed_texts(&texts, request.concurrency))
+    {
+        match result {
+            Ok(embedding) => {
+                session
+                    .annotation_store
+                    .upsert(&TextVectorRecord {
+                        document,
+                        embedding,
+                    })
+                    .map_err(store_error)?;
+                indexed_annotations += 1;
+            }
+            Err(error) => failures.push(EmbeddingAnnotationFailure {
+                item_id: document.document_id,
+                error,
+            }),
+        }
+    }
+    Ok(EmbeddingIndexAnnotationsResult {
+        session_id: request.session_id,
+        indexed_annotations,
+        skipped_annotations,
+        total_annotations: annotation_indexed_count(&session)?,
+        failures,
+    })
+}
+
+pub fn prune_annotations(
+    request: EmbeddingPruneAnnotationsRequest,
+    sessions: &SessionManager,
+) -> HandlerResult<EmbeddingPruneAnnotationsResult> {
+    validate_session_id(&request.session_id)?;
+    let handle = embedding_session(sessions, &request.session_id)?;
+    let mut session = handle.lock().map_err(session_error)?;
+    let namespace = session.settings.namespace.clone();
+    let keep = request
+        .item_ids
+        .into_iter()
+        .filter(|id| !id.trim().is_empty())
+        .collect::<HashSet<_>>();
+    if !keep.is_empty() {
+        session
+            .annotation_store
+            .prune_item_links(&namespace, "annotation", &keep)
+            .map_err(store_error)?;
+    }
+    let removed_annotations = session
+        .annotation_store
+        .prune_unlinked_documents(&namespace, "annotation")
+        .map_err(store_error)?;
+    Ok(EmbeddingPruneAnnotationsResult {
+        session_id: request.session_id,
+        removed_annotations,
+        total_annotations: annotation_indexed_count(&session)?,
     })
 }
 
@@ -451,11 +569,11 @@ pub fn prune(
         .delete_missing(&namespace, Modality::Image, SOURCE_KEY, &keep_ids)
         .map_err(store_error)?;
     session
-        .text_store
+        .annotation_store
         .prune_item_links(&namespace, "annotation", &keep_ids)
         .map_err(store_error)?;
     session
-        .text_store
+        .annotation_store
         .prune_unlinked_documents(&namespace, "annotation")
         .map_err(store_error)?;
     let total_indexed = indexed_count(&session)?;
@@ -539,6 +657,8 @@ pub fn status(
             tag_document_count: tag_document_count(&session)?,
             tag_indexed_count: tag_indexed_count(&session)?,
             tag_link_count: tag_link_count(&session)?,
+            annotation_document_count: annotation_document_count(&session)?,
+            annotation_indexed_count: annotation_indexed_count(&session)?,
         });
     }
 
@@ -558,9 +678,15 @@ pub fn status(
         request.dimension,
     )
     .map_err(store_error)?;
-    let text_store = TextVectorStore::open(
+    let tag_store = TextVectorStore::open(
         &request.database_path,
-        &request.model_key,
+        format!("{}::tag", request.model_key),
+        request.dimension,
+    )
+    .map_err(store_error)?;
+    let annotation_store = TextVectorStore::open(
+        &request.database_path,
+        format!("{}::annotation", request.model_key),
         request.dimension,
     )
     .map_err(store_error)?;
@@ -570,14 +696,20 @@ pub fn status(
         indexed_count: store
             .count_modality(&request.namespace, Modality::Image)
             .map_err(store_error)?,
-        tag_document_count: text_store
+        tag_document_count: tag_store
             .count_documents(&request.namespace, "tag")
             .map_err(store_error)?,
-        tag_indexed_count: text_store
+        tag_indexed_count: tag_store
             .count_embeddings(&request.namespace, "tag")
             .map_err(store_error)?,
-        tag_link_count: text_store
+        tag_link_count: tag_store
             .count_links(&request.namespace, "tag")
+            .map_err(store_error)?,
+        annotation_document_count: annotation_store
+            .count_documents(&request.namespace, "annotation")
+            .map_err(store_error)?,
+        annotation_indexed_count: annotation_store
+            .count_embeddings(&request.namespace, "annotation")
             .map_err(store_error)?,
     })
 }
@@ -632,12 +764,14 @@ pub fn search_text(
         .map_err(store_error)?;
     let hits = search_hits(results, None, fetch_count);
     let hits = fuse_multimodal_hits(
-        &session.text_store,
+        &session.tag_store,
+        &session.annotation_store,
         &namespace,
         &query,
         hits,
         request.top_k,
         request.include_tags,
+        request.include_annotations,
     )
     .map_err(store_error)?;
 
@@ -716,12 +850,14 @@ pub fn search_image(
         fetch_count,
     );
     let hits = fuse_multimodal_hits(
-        &session.text_store,
+        &session.tag_store,
+        &session.annotation_store,
         &namespace,
         &query,
         hits,
         result_count,
-        true,
+        false,
+        false,
     )
     .map_err(store_error)?;
 
@@ -764,13 +900,24 @@ fn create_session(settings: EmbeddingSessionSettings) -> Result<EmbeddingSession
     let dimension = engine.dimension();
     let store = VectorStore::open(&settings.database_path, &settings.model_key, dimension)
         .map_err(|error| error.to_string())?;
-    let text_store = TextVectorStore::open(&settings.database_path, &settings.model_key, dimension)
-        .map_err(|error| error.to_string())?;
+    let tag_store = TextVectorStore::open(
+        &settings.database_path,
+        format!("{}::tag", settings.model_key),
+        dimension,
+    )
+    .map_err(|error| error.to_string())?;
+    let annotation_store = TextVectorStore::open(
+        &settings.database_path,
+        format!("{}::annotation", settings.model_key),
+        dimension,
+    )
+    .map_err(|error| error.to_string())?;
     Ok(EmbeddingSession {
         settings,
         engine,
         store,
-        text_store,
+        tag_store,
+        annotation_store,
     })
 }
 
@@ -1088,123 +1235,76 @@ fn indexed_count(session: &EmbeddingSession) -> HandlerResult<u64> {
 
 fn tag_document_count(session: &EmbeddingSession) -> HandlerResult<u64> {
     session
-        .text_store
+        .tag_store
         .count_documents(&session.settings.namespace, "tag")
         .map_err(store_error)
 }
 
 fn tag_indexed_count(session: &EmbeddingSession) -> HandlerResult<u64> {
     session
-        .text_store
+        .tag_store
         .count_embeddings(&session.settings.namespace, "tag")
         .map_err(store_error)
 }
 
 fn tag_link_count(session: &EmbeddingSession) -> HandlerResult<u64> {
     session
-        .text_store
+        .tag_store
         .count_links(&session.settings.namespace, "tag")
         .map_err(store_error)
 }
 
-fn sync_annotation_embeddings(
-    session: &mut EmbeddingSession,
-    namespace: &str,
-    images: &[protocol::EmbeddingImageInput],
-    indexed_ids: &[String],
-    skipped_ids: &[String],
-    failures: &mut Vec<EmbeddingImageFailure>,
-) -> HandlerResult<()> {
-    let eligible = indexed_ids
-        .iter()
-        .chain(skipped_ids.iter())
-        .collect::<HashSet<_>>();
-    let mut pending = Vec::new();
-    for image in images {
-        if !eligible.contains(&image.id) {
-            continue;
-        }
-        let content = image.annotation.trim();
-        if content.is_empty() {
-            session
-                .text_store
-                .replace_item_links(namespace, "annotation", &image.id, &[])
-                .map_err(store_error)?;
-            session
-                .text_store
-                .delete_document(namespace, "annotation", &image.id)
-                .map_err(store_error)?;
-            continue;
-        }
-        let document = TextDocumentRecord {
-            namespace: namespace.to_string(),
-            kind: "annotation".to_string(),
-            document_id: image.id.clone(),
-            content: content.to_string(),
-            updated_at: image.modified_at,
-        };
-        let needs = session
-            .text_store
-            .needs_embedding(namespace, "annotation", &image.id, content)
-            .map_err(store_error)?;
-        session
-            .text_store
-            .upsert_document(&document)
-            .map_err(store_error)?;
-        session
-            .text_store
-            .replace_item_links(namespace, "annotation", &image.id, &[image.id.clone()])
-            .map_err(store_error)?;
-        if needs {
-            pending.push((image.clone(), document));
-        }
-    }
-    let texts = pending
-        .iter()
-        .map(|(_, document)| document.content.clone())
-        .collect::<Vec<_>>();
-    for ((image, document), result) in pending
-        .into_iter()
-        .zip(session.engine.embed_texts(&texts, 4))
-    {
-        match result {
-            Ok(embedding) => {
-                let _ = session
-                    .text_store
-                    .upsert(&TextVectorRecord { document, embedding })
-                    .map_err(store_error)?;
-            }
-            Err(error) => failures.push(EmbeddingImageFailure {
-                id: image.id,
-                path: image.path,
-                error: format!("annotation embedding failed: {error}"),
-            }),
-        }
-    }
-    Ok(())
+fn annotation_document_count(session: &EmbeddingSession) -> HandlerResult<u64> {
+    session
+        .annotation_store
+        .count_documents(&session.settings.namespace, "annotation")
+        .map_err(store_error)
+}
+fn annotation_indexed_count(session: &EmbeddingSession) -> HandlerResult<u64> {
+    session
+        .annotation_store
+        .count_embeddings(&session.settings.namespace, "annotation")
+        .map_err(store_error)
 }
 
 fn multimodal_fetch_count(top_k: usize, available: usize) -> usize {
-    top_k.saturating_mul(8).max(top_k).min(available).min(MAX_SEARCH_RESULTS)
+    top_k
+        .saturating_mul(8)
+        .max(top_k)
+        .min(available)
+        .min(MAX_SEARCH_RESULTS)
 }
 
 #[cfg(test)]
 fn image_search_fetch_count(result_count: usize, available: usize) -> usize {
-    result_count.saturating_add(1).min(available).min(MAX_SEARCH_RESULTS)
+    result_count
+        .saturating_add(1)
+        .min(available)
+        .min(MAX_SEARCH_RESULTS)
 }
 
 #[cfg(test)]
-fn merge_tag_hits(store: &TextVectorStore, namespace: &str, query: &[f32], image_hits: Vec<EmbeddingSearchHit>, top_k: usize) -> Result<Vec<EmbeddingSearchHit>, text_vector_store::StoreError> {
-    fuse_multimodal_hits(store, namespace, query, image_hits, top_k, true)
+fn merge_tag_hits(
+    store: &TextVectorStore,
+    namespace: &str,
+    query: &[f32],
+    image_hits: Vec<EmbeddingSearchHit>,
+    top_k: usize,
+) -> Result<Vec<EmbeddingSearchHit>, text_vector_store::StoreError> {
+    fuse_multimodal_hits(
+        store, store, namespace, query, image_hits, top_k, true, false,
+    )
 }
 
 fn fuse_multimodal_hits(
-    store: &TextVectorStore,
+    tag_store: &TextVectorStore,
+    annotation_store: &TextVectorStore,
     namespace: &str,
     query: &[f32],
     mut image_hits: Vec<EmbeddingSearchHit>,
     top_k: usize,
     include_tags: bool,
+    include_annotations: bool,
 ) -> Result<Vec<EmbeddingSearchHit>, text_vector_store::StoreError> {
     if image_hits.is_empty() {
         return Ok(image_hits);
@@ -1217,8 +1317,11 @@ fn fuse_multimodal_hits(
         .iter()
         .map(|hit| (hit.item_id.clone(), (hit.similarity.max(0.0), 0.0, 0.0)))
         .collect::<HashMap<_, _>>();
-    for kind in ["annotation", "tag"] {
-        if kind == "tag" && !include_tags {
+    for (store, kind, enabled) in [
+        (annotation_store, "annotation", include_annotations),
+        (tag_store, "tag", include_tags),
+    ] {
+        if !enabled {
             continue;
         }
         let count = store.count_embeddings(namespace, kind)? as usize;
@@ -1240,13 +1343,24 @@ fn fuse_multimodal_hits(
             }
         }
     }
+    let weights = match (include_tags, include_annotations) {
+        (false, false) => (1.0, 0.0, 0.0),
+        (true, false) => (0.8, 0.0, 0.2),
+        (false, true) => (0.6, 0.4, 0.0),
+        (true, true) => (0.5, 0.1, 0.4),
+    };
     for hit in &mut image_hits {
         let (image, annotation, tag) = scores.get(&hit.item_id).copied().unwrap_or_default();
-        hit.similarity = image * 0.7 + annotation * 0.2 + tag * 0.1;
+        hit.similarity = image * weights.0 + annotation * weights.1 + tag * weights.2;
     }
-    let max_score = image_hits.iter().map(|hit| hit.similarity).fold(0.0_f64, f64::max);
+    let max_score = image_hits
+        .iter()
+        .map(|hit| hit.similarity)
+        .fold(0.0_f64, f64::max);
     if max_score > 0.0 {
-        for hit in &mut image_hits { hit.similarity /= max_score; }
+        for hit in &mut image_hits {
+            hit.similarity /= max_score;
+        }
     }
     image_hits.sort_by(|left, right| right.similarity.total_cmp(&left.similarity));
     image_hits.truncate(top_k);
@@ -1391,6 +1505,7 @@ mod tests {
                 text: "query".to_string(),
                 top_k: 0,
                 include_tags: false,
+                include_annotations: false,
             },
             &SessionManager::default(),
         )
@@ -1514,6 +1629,7 @@ mod tests {
                 text: "query".to_string(),
                 top_k: 1,
                 include_tags: false,
+                include_annotations: false,
             },
             &sessions,
         )
@@ -1528,6 +1644,7 @@ mod tests {
                 text: "query".to_string(),
                 top_k: 1,
                 include_tags: false,
+                include_annotations: false,
             },
             &sessions,
         )

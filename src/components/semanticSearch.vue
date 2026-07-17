@@ -41,6 +41,7 @@
     import type {
         EmbeddingImageFailure,
         EmbeddingImageInput,
+        EmbeddingAnnotationInput,
         EmbeddingTagInput,
         EmbeddingHealthResult,
         EmbeddingModelInfo,
@@ -89,6 +90,9 @@
     type SelectableEmbeddingModel = EmbeddingModelInfo & {
         provider: "local" | "open_ai" | "gemini";
         remoteModel: string;
+        selectionKey: string;
+        endpoint: string;
+        apiKey: string;
     };
 
     const activeTab = ref("index");
@@ -114,6 +118,14 @@
     const tagTotalItems = ref(0);
     const tagProcessedItems = ref(0);
     const tagIndexFailures = ref<string[]>([]);
+    const annotationDocumentCount = ref(0);
+    const annotationIndexedCount = ref(0);
+    const libraryAnnotationCount = ref(0);
+    const isAnnotationIndexing = ref(false);
+    const annotationIndexStatus = ref("就绪");
+    const annotationTotalItems = ref(0);
+    const annotationProcessedItems = ref(0);
+    const annotationIndexFailures = ref<string[]>([]);
 
     const isIndexing = ref(false);
     const pauseRequested = ref(false);
@@ -131,6 +143,7 @@
 
     const searchMode = ref<"text" | "image">("text");
     const includeTags = ref(false);
+    const includeAnnotations = ref(false);
     const queryText = ref("");
     const negativeQueryText = ref("");
     const isSearching = ref(false);
@@ -152,11 +165,11 @@
     const modelOptions = computed(() =>
         models.value.map((model) => ({
             label: model.name,
-            value: model.modelKey,
+            value: model.selectionKey,
         })),
     );
     const selectedModelInfo = computed(() =>
-        models.value.find((model) => model.modelKey === selectedModel.value),
+        models.value.find((model) => model.selectionKey === selectedModel.value),
     );
     const isRemoteModel = computed(
         () =>
@@ -175,13 +188,11 @@
     });
     const remoteModelKey = (
         provider: "open_ai" | "gemini",
-        endpoint: string,
         model: string,
         dimension: number,
     ) => {
         const identity = [
             provider,
-            endpoint.trim().replace(/\/+$/, ""),
             model.trim(),
             dimension,
         ].join("\u0000");
@@ -219,6 +230,9 @@
     const canIncludeTags = computed(
         () => tagIndexedCount.value > 0 && tagLinkCount.value > 0,
     );
+    const canIncludeAnnotations = computed(() => annotationIndexedCount.value > 0);
+    const annotationPendingCount = computed(() => Math.max(libraryAnnotationCount.value - annotationIndexedCount.value, 0));
+    const annotationIndexPercentage = computed(() => annotationTotalItems.value === 0 ? 0 : Number(((annotationProcessedItems.value / annotationTotalItems.value) * 100).toFixed(2)));
     const tagIndexPercentage = computed(() =>
         tagTotalItems.value === 0
             ? 0
@@ -279,8 +293,9 @@
     watch(canIncludeTags, (enabled) => {
         if (!enabled) includeTags.value = false;
     });
+    watch(canIncludeAnnotations, (enabled) => { if (!enabled) includeAnnotations.value = false; });
     watch(searchMode, (mode) => {
-        if (mode !== "text") includeTags.value = false;
+        if (mode !== "text") { includeTags.value = false; includeAnnotations.value = false; }
     });
     watch(searchLoadSentinel, (sentinel) => {
         searchResultObserver?.disconnect();
@@ -327,53 +342,21 @@
                       )
                   ).models
                 : [];
-            const remoteModel = String(
-                config.embeddingModelName || "",
-            ).trim();
-            const endpoint = String(config.endpoint || "").trim();
-            const remoteProvider: "open_ai" | "gemini" =
-                config.embeddingProvider === "gemini" ? "gemini" : "open_ai";
-            const remoteDimension =
-                remoteProvider === "gemini"
-                    ? Math.min(
-                          3072,
-                          Math.max(
-                              128,
-                              Number(config.embeddingDimension) || 1536,
-                          ),
-                      )
-                    : 0;
+            const profiles = config.embeddingRemoteProfiles?.length ? config.embeddingRemoteProfiles : (config.embeddingModelName && config.endpoint ? [{ id: "legacy", name: "远程接口", provider: config.embeddingProvider === "gemini" ? "gemini" as const : "open_ai" as const, endpoint: config.endpoint, apiKey: config.apiKey, model: config.embeddingModelName, dimension: config.embeddingDimension }] : []);
             models.value = [
                 ...localModels.map((model) => ({
                     ...model,
                     provider: "local" as const,
                     remoteModel: "",
+                    selectionKey: model.modelKey,
+                    endpoint: "",
+                    apiKey: "",
                 })),
-                ...(remoteModel && endpoint
-                    ? [
-                          {
-                              name:
-                                  remoteProvider === "gemini"
-                                      ? `${remoteModel}（Gemini / ${remoteDimension}维）`
-                                      : `${remoteModel}（OpenAI Compatible）`,
-                              modelKey: remoteModelKey(
-                                  remoteProvider,
-                                  endpoint,
-                                  remoteModel,
-                                  remoteDimension,
-                              ),
-                              modelPath: "",
-                              tokenizerPath: "",
-                              dimension: remoteDimension,
-                              provider: remoteProvider,
-                              remoteModel,
-                          },
-                      ]
-                    : []),
+                ...profiles.filter((profile) => profile.model && profile.endpoint).map((profile) => ({ name: `${profile.name || profile.model} · ${profile.model}`, modelKey: remoteModelKey(profile.provider, profile.model, profile.provider === "gemini" ? profile.dimension : 0), modelPath: "", tokenizerPath: "", dimension: profile.provider === "gemini" ? profile.dimension : 0, provider: profile.provider, remoteModel: profile.model, selectionKey: `remote:${profile.id}`, endpoint: profile.endpoint, apiKey: profile.apiKey })),
             ];
             if (
                 !models.value.some(
-                    (model) => model.modelKey === selectedModel.value,
+                    (model) => model.selectionKey === selectedModel.value,
                 )
             ) {
                 selectedModel.value = models.value[0]?.modelKey || "";
@@ -403,11 +386,15 @@
             tagDocumentCount.value = status.tagDocumentCount;
             tagIndexedCount.value = status.tagIndexedCount;
             tagLinkCount.value = status.tagLinkCount;
+            annotationDocumentCount.value = status.annotationDocumentCount;
+            annotationIndexedCount.value = status.annotationIndexedCount;
         } catch {
             indexedCount.value = 0;
             tagDocumentCount.value = 0;
             tagIndexedCount.value = 0;
             tagLinkCount.value = 0;
+            annotationDocumentCount.value = 0;
+            annotationIndexedCount.value = 0;
         }
     }
 
@@ -416,7 +403,7 @@
         const model = selectedModelInfo.value;
         if (!model) throw new Error("请先下载并选择向量模型");
         if (!config.modelLocation) throw new Error("请先设置模型根目录");
-        if (model.provider !== "local" && !config.endpoint?.trim()) {
+        if (model.provider !== "local" && !model.endpoint.trim()) {
             throw new Error("请先设置远程向量接口");
         }
         const databasePath = path.join(
@@ -433,8 +420,8 @@
             config.embeddingDevice || "auto",
             model.provider,
             model.remoteModel,
-            model.provider !== "local" ? config.endpoint : "",
-            model.provider !== "local" ? config.apiKey : "",
+            model.endpoint,
+            model.apiKey,
             model.dimension,
             backend.workerGeneration,
         ].join("\u0000");
@@ -458,8 +445,8 @@
                       ? "direct_ml"
                       : "auto",
                 model.provider,
-                model.provider !== "local" ? config.endpoint : "",
-                model.provider !== "local" ? config.apiKey : "",
+                model.endpoint,
+                model.apiKey,
                 model.remoteModel,
                 model.provider === "gemini" ? model.dimension : 0,
             );
@@ -467,8 +454,10 @@
             tagDocumentCount.value = result.tagDocumentCount;
             tagIndexedCount.value = result.tagIndexedCount;
             tagLinkCount.value = result.tagLinkCount;
+            annotationDocumentCount.value = result.annotationDocumentCount;
+            annotationIndexedCount.value = result.annotationIndexedCount;
             loadedSignature.value = signature;
-            loadedModelKey.value = model.modelKey;
+            loadedModelKey.value = model.selectionKey;
         }
     }
 
@@ -518,6 +507,7 @@
             }
         }
         libraryTagCount.value = tags.size;
+        libraryAnnotationCount.value = images.filter((image) => String(image.annotation || "").trim()).length;
         libraryCountsReady.value = true;
     }
 
@@ -540,6 +530,28 @@
             itemId: item.id,
             tags: Array.isArray(item.tags) ? item.tags : [],
         };
+    }
+    function toAnnotationInput(item: EagleImage): EmbeddingAnnotationInput { return { itemId: item.id, annotation: String(item.annotation || ""), updatedAt: Number(item.modifiedAt) || 0 }; }
+
+    async function startAnnotationIndexing() {
+        if (isIndexing.value || isTagIndexing.value || isAnnotationIndexing.value || isSearching.value) return;
+        const taskId = beginTask("embedding", "全局注释向量化"); if (!taskId) return;
+        isAnnotationIndexing.value = true; annotationIndexFailures.value = []; annotationIndexStatus.value = "正在加载模型";
+        try {
+            await ensureSession(); const images = await getLibraryImages(); applyLibraryCounts(images);
+            annotationTotalItems.value = images.length; annotationProcessedItems.value = 0;
+            const size = Math.max(20, batchSize.value * 4);
+            for (let offset = 0; offset < images.length; offset += size) {
+                const batch = images.slice(offset, offset + size); annotationIndexStatus.value = `正在处理 ${offset + 1}-${Math.min(offset + batch.length, images.length)}`;
+                const result = await getBackendClient().indexEmbeddingAnnotations(SESSION_ID, batch.map(toAnnotationInput), batchSize.value);
+                annotationProcessedItems.value += batch.length; annotationIndexedCount.value = result.totalAnnotations;
+                annotationIndexFailures.value.push(...result.failures.map((failure) => `${failure.itemId}：${failure.error}`));
+                updateTask(taskId, { detail: annotationIndexStatus.value, completed: annotationProcessedItems.value, total: images.length });
+            }
+            const pruned = await getBackendClient().pruneEmbeddingAnnotations(SESSION_ID, images.map((image) => image.id)); annotationIndexedCount.value = pruned.totalAnnotations;
+            annotationIndexStatus.value = annotationIndexFailures.value.length ? "完成，部分注释失败" : "注释索引完成"; completeTask(taskId, annotationIndexStatus.value);
+        } catch (error) { annotationIndexStatus.value = "注释索引失败"; failTask(taskId, error); notification(errorMessage(error), "error"); }
+        finally { isAnnotationIndexing.value = false; }
     }
 
     async function startIndexing() {
@@ -642,7 +654,7 @@
     }
 
     async function startTagIndexing() {
-        if (isIndexing.value || isTagIndexing.value || isSearching.value) return;
+        if (isIndexing.value || isTagIndexing.value || isAnnotationIndexing.value || isSearching.value) return;
         if (backenAPI.is_processing) {
             notification("另一个任务正在运行", "warning");
             return;
@@ -825,7 +837,7 @@
     }
 
     async function runSearch() {
-        if (isIndexing.value || isTagIndexing.value || isSearching.value) return;
+        if (isIndexing.value || isTagIndexing.value || isAnnotationIndexing.value || isSearching.value) return;
         if (backenAPI.is_processing) {
             notification("另一个任务正在运行", "warning");
             return;
@@ -858,6 +870,7 @@
                         queryText.value,
                         resultCount,
                         useTagFusion,
+                        includeAnnotations.value && canIncludeAnnotations.value,
                     )
                 ).hits;
             } else {
@@ -892,6 +905,7 @@
                         negativeQueryText.value,
                         resultCount,
                         useTagFusion,
+                        includeAnnotations.value && canIncludeAnnotations.value,
                     )
                 ).hits;
                 hits = filterNegativeHits(hits, negativeHits);
@@ -1303,6 +1317,20 @@
                 </section>
             </n-tab-pane>
 
+            <n-tab-pane name="annotation-index" tab="注释向量化">
+                <section class="index-panel">
+                    <div class="metrics-row">
+                        <div class="metric"><span>总注释</span><strong>{{ libraryAnnotationCount }}</strong></div>
+                        <div class="metric metric--green"><span>已向量化</span><strong>{{ annotationIndexedCount }}</strong></div>
+                        <div class="metric"><span>待向量化</span><strong>{{ annotationPendingCount }}</strong></div>
+                        <div class="metric metric--red"><span>失败</span><strong>{{ annotationIndexFailures.length }}</strong></div>
+                    </div>
+                    <div class="progress-block"><div class="progress-heading"><span>{{ annotationIndexStatus }}</span><span>{{ annotationProcessedItems }}/{{ annotationTotalItems }}</span></div><n-progress type="line" :percentage="annotationIndexPercentage" :processing="isAnnotationIndexing" indicator-placement="inside" /></div>
+                    <div class="index-actions"><span class="field-label">每张图片最多建立一条注释向量</span><n-button type="primary" :loading="isAnnotationIndexing" :disabled="!selectedModel || isIndexing || isTagIndexing || isSearching" @click="startAnnotationIndexing"><template #icon><n-icon><InformationCircleOutline /></n-icon></template>{{ isAnnotationIndexing ? "正在向量化" : "开始注释向量化" }}</n-button></div>
+                    <n-alert v-if="annotationIndexFailures.length" title="未能处理的注释" type="warning" class="failure-alert"><div v-for="failure in annotationIndexFailures.slice(0, 8)" :key="failure">{{ failure }}</div></n-alert>
+                </section>
+            </n-tab-pane>
+
             <n-tab-pane name="search" tab="相似图片搜索">
                 <section class="search-panel">
                     <div class="search-toolbar">
@@ -1329,6 +1357,8 @@
                             <template #checked>标签融合</template>
                             <template #unchecked>仅图片</template>
                         </n-switch>
+                        <n-switch v-model:value="includeAnnotations" :disabled="isSearching || isIndexing || isTagIndexing || isAnnotationIndexing || searchMode !== 'text' || !canIncludeAnnotations"><template #checked>注释融合</template><template #unchecked>不含注释</template></n-switch>
+                        <n-tag v-if="searchMode === 'text'" size="small" :bordered="false">{{ includeTags && includeAnnotations ? '图片 0.5 / 标签 0.4 / 注释 0.1' : includeTags ? '图片 0.8 / 标签 0.2' : includeAnnotations ? '图片 0.6 / 注释 0.4' : '仅图片 1.0' }}</n-tag>
                         <span v-if="!canIncludeTags" class="field-label">
                             完成标签向量化后可开启
                         </span>
