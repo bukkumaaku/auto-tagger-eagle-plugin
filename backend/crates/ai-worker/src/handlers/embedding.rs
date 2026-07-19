@@ -53,6 +53,7 @@ struct EmbeddingSessionSettings {
     api_key: String,
     remote_model: String,
     remote_dimension: usize,
+    legacy_model_key: String,
 }
 
 struct EmbeddingSession {
@@ -104,6 +105,7 @@ pub fn load(
         api_key: request.api_key,
         remote_model: request.remote_model.trim().to_string(),
         remote_dimension: request.remote_dimension,
+        legacy_model_key: request.legacy_model_key.trim().to_string(),
     };
     if settings.model_key.is_empty() {
         return Err(HandlerError::new(
@@ -178,11 +180,16 @@ pub fn index_batch(
             });
             continue;
         }
-        let stored_at = session
+        let stored = session
             .store
-            .item_updated_at(&namespace, &image.id, Modality::Image, SOURCE_KEY)
+            .get_embedding(&namespace, &image.id, Modality::Image, SOURCE_KEY)
             .map_err(store_error)?;
-        if stored_at.is_some_and(|stored_at| stored_at >= image.modified_at) {
+        if image.modified_at > 0
+            && stored.as_ref().is_some_and(|stored| {
+                stored.source_uri.as_deref() == Some(image.path.as_str())
+                    && stored.updated_at >= image.modified_at
+            })
+        {
             skipped_ids.push(image.id);
         } else {
             pending.push(image);
@@ -430,10 +437,6 @@ pub fn index_annotations(
             skipped_annotations += 1;
             continue;
         }
-        let needs = session
-            .annotation_store
-            .needs_embedding(&namespace, "annotation", &item.item_id, content)
-            .map_err(store_error)?;
         let document = TextDocumentRecord {
             namespace: namespace.clone(),
             kind: "annotation".to_string(),
@@ -441,22 +444,26 @@ pub fn index_annotations(
             content: content.to_string(),
             updated_at: item.updated_at,
         };
-        session
+        if session
             .annotation_store
-            .upsert_document(&document)
-            .map_err(store_error)?;
-        session
-            .annotation_store
-            .replace_item_links(
-                &namespace,
-                "annotation",
-                &item.item_id,
-                &[item.item_id.clone()],
-            )
-            .map_err(store_error)?;
-        if needs {
+            .needs_embedding(&namespace, "annotation", &item.item_id, content)
+            .map_err(store_error)?
+        {
             pending.push(document);
         } else {
+            session
+                .annotation_store
+                .upsert_document(&document)
+                .map_err(store_error)?;
+            session
+                .annotation_store
+                .replace_item_links(
+                    &namespace,
+                    "annotation",
+                    &item.item_id,
+                    &[item.item_id.clone()],
+                )
+                .map_err(store_error)?;
             skipped_annotations += 1;
         }
     }
@@ -475,9 +482,18 @@ pub fn index_annotations(
                 session
                     .annotation_store
                     .upsert(&TextVectorRecord {
-                        document,
+                        document: document.clone(),
                         embedding,
                     })
+                    .map_err(store_error)?;
+                session
+                    .annotation_store
+                    .replace_item_links(
+                        &namespace,
+                        "annotation",
+                        &document.document_id,
+                        &[document.document_id.clone()],
+                    )
                     .map_err(store_error)?;
                 indexed_annotations += 1;
             }
@@ -650,49 +666,79 @@ pub fn status(
         .map_err(session_error)?
     {
         let session = handle.lock().map_err(session_error)?;
-        return Ok(EmbeddingStatusResult {
-            session_id: request.session_id,
-            model_key: session.settings.model_key.clone(),
-            indexed_count: indexed_count(&session)?,
-            tag_document_count: tag_document_count(&session)?,
-            tag_indexed_count: tag_indexed_count(&session)?,
-            tag_link_count: tag_link_count(&session)?,
-            annotation_document_count: annotation_document_count(&session)?,
-            annotation_indexed_count: annotation_indexed_count(&session)?,
-        });
+        let matches = (request.model_key.trim().is_empty()
+            || request.model_key == session.settings.model_key)
+            && (request.database_path.trim().is_empty()
+                || request.database_path == session.settings.database_path)
+            && (request.namespace.trim().is_empty()
+                || request.namespace == session.settings.namespace)
+            && (request.dimension == 0 || request.dimension == session.engine.dimension());
+        if matches {
+            return Ok(EmbeddingStatusResult {
+                session_id: request.session_id,
+                model_key: session.settings.model_key.clone(),
+                indexed_count: indexed_count(&session)?,
+                tag_document_count: tag_document_count(&session)?,
+                tag_indexed_count: tag_indexed_count(&session)?,
+                tag_link_count: tag_link_count(&session)?,
+                annotation_document_count: annotation_document_count(&session)?,
+                annotation_indexed_count: annotation_indexed_count(&session)?,
+            });
+        }
     }
 
     if request.database_path.trim().is_empty()
         || request.namespace.trim().is_empty()
         || request.model_key.trim().is_empty()
-        || request.dimension == 0
     {
         return Err(HandlerError::new(
             "EMBEDDING_SESSION_NOT_FOUND",
             format!("session `{}` is not loaded", request.session_id),
         ));
     }
-    let store = VectorStore::open(
-        &request.database_path,
-        &request.model_key,
-        request.dimension,
-    )
-    .map_err(store_error)?;
+    let mut status_model_key = request.model_key.clone();
+    let current_dimension =
+        VectorStore::stored_dimension(&request.database_path, &request.model_key)
+            .map_err(store_error)?;
+    let mut dimension = current_dimension.unwrap_or(request.dimension);
+    if current_dimension.is_none() && !request.legacy_model_key.trim().is_empty() {
+        if let Some(legacy_dimension) =
+            VectorStore::stored_dimension(&request.database_path, &request.legacy_model_key)
+                .map_err(store_error)?
+        {
+            status_model_key = request.legacy_model_key.clone();
+            dimension = legacy_dimension;
+        }
+    }
+    if dimension == 0 {
+        return Ok(EmbeddingStatusResult {
+            session_id: request.session_id,
+            model_key: status_model_key,
+            indexed_count: 0,
+            tag_document_count: 0,
+            tag_indexed_count: 0,
+            tag_link_count: 0,
+            annotation_document_count: 0,
+            annotation_indexed_count: 0,
+        });
+    }
+    let store = VectorStore::open(&request.database_path, &status_model_key, dimension)
+        .map_err(store_error)?;
     let tag_store = TextVectorStore::open(
         &request.database_path,
-        format!("{}::tag", request.model_key),
-        request.dimension,
+        format!("{}::tag", status_model_key),
+        dimension,
     )
     .map_err(store_error)?;
     let annotation_store = TextVectorStore::open(
         &request.database_path,
-        format!("{}::annotation", request.model_key),
-        request.dimension,
+        format!("{}::annotation", status_model_key),
+        dimension,
     )
     .map_err(store_error)?;
     Ok(EmbeddingStatusResult {
         session_id: request.session_id,
-        model_key: request.model_key,
+        model_key: status_model_key,
         indexed_count: store
             .count_modality(&request.namespace, Modality::Image)
             .map_err(store_error)?,
@@ -898,20 +944,31 @@ fn create_session(settings: EmbeddingSessionSettings) -> Result<EmbeddingSession
         EmbeddingProvider::Gemini => EmbeddingEngine::Gemini(GeminiEmbedding::load(&settings)?),
     };
     let dimension = engine.dimension();
-    let store = VectorStore::open(&settings.database_path, &settings.model_key, dimension)
+    let mut store = VectorStore::open(&settings.database_path, &settings.model_key, dimension)
         .map_err(|error| error.to_string())?;
-    let tag_store = TextVectorStore::open(
+    let mut tag_store = TextVectorStore::open(
         &settings.database_path,
         format!("{}::tag", settings.model_key),
         dimension,
     )
     .map_err(|error| error.to_string())?;
-    let annotation_store = TextVectorStore::open(
+    let mut annotation_store = TextVectorStore::open(
         &settings.database_path,
         format!("{}::annotation", settings.model_key),
         dimension,
     )
     .map_err(|error| error.to_string())?;
+    if !settings.legacy_model_key.is_empty() && settings.legacy_model_key != settings.model_key {
+        store
+            .import_model_if_empty(&settings.legacy_model_key)
+            .map_err(|error| error.to_string())?;
+        tag_store
+            .import_model_if_empty(&format!("{}::tag", settings.legacy_model_key))
+            .map_err(|error| error.to_string())?;
+        annotation_store
+            .import_model_if_empty(&format!("{}::annotation", settings.legacy_model_key))
+            .map_err(|error| error.to_string())?;
+    }
     Ok(EmbeddingSession {
         settings,
         engine,
@@ -1493,6 +1550,7 @@ mod tests {
                 api_key: String::new(),
                 remote_model: String::new(),
                 remote_dimension: 0,
+                legacy_model_key: String::new(),
             },
             &SessionManager::default(),
         )
@@ -1511,6 +1569,41 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error.code, "INVALID_TOP_K");
+    }
+
+    #[test]
+    fn status_reads_a_legacy_remote_model_without_loading_a_session() {
+        let database_path = test_path("status-legacy.sqlite3");
+        {
+            let mut store = VectorStore::open(&database_path, "legacy", 2).unwrap();
+            store
+                .upsert(&VectorRecord {
+                    namespace: "library".to_string(),
+                    item_id: "image-1".to_string(),
+                    modality: Modality::Image,
+                    source_key: SOURCE_KEY.to_string(),
+                    source_uri: Some("image.png".to_string()),
+                    content: None,
+                    updated_at: 1,
+                    embedding: vec![1.0, 0.0],
+                })
+                .unwrap();
+        }
+        let result = status(
+            EmbeddingStatusRequest {
+                session_id: "embedding-main".to_string(),
+                database_path: database_path.to_string_lossy().into_owned(),
+                namespace: "library".to_string(),
+                model_key: "current".to_string(),
+                dimension: 0,
+                legacy_model_key: "legacy".to_string(),
+            },
+            &SessionManager::default(),
+        )
+        .unwrap();
+        assert_eq!(result.indexed_count, 1);
+        assert_eq!(result.model_key, "legacy");
+        std::fs::remove_file(database_path).unwrap();
     }
 
     #[test]
@@ -1600,6 +1693,7 @@ mod tests {
                 api_key: "secret".to_string(),
                 remote_model: "remote-model".to_string(),
                 remote_dimension: 0,
+                legacy_model_key: String::new(),
             },
             &sessions,
         )

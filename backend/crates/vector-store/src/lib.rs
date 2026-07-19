@@ -126,6 +126,125 @@ pub struct VectorStore {
 }
 
 impl VectorStore {
+    pub fn stored_dimension(
+        path: impl AsRef<Path>,
+        model_key: impl Into<String>,
+    ) -> Result<Option<usize>, StoreError> {
+        let model_key = model_key.into().trim().to_string();
+        if model_key.is_empty() {
+            return Err(StoreError::EmptyModelKey);
+        }
+        let path = path.as_ref();
+        if !path.exists() {
+            return Ok(None);
+        }
+        let connection = Connection::open(path)?;
+        let table_exists = connection.query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM sqlite_master
+                 WHERE type = 'table' AND name = 'vector_models'
+             )",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?;
+        if table_exists == 0 {
+            return Ok(None);
+        }
+        Ok(connection
+            .query_row(
+                "SELECT dimension FROM vector_models WHERE model_key = ?1",
+                [&model_key],
+                |row| row.get::<_, usize>(0),
+            )
+            .optional()?)
+    }
+
+    pub fn import_model_if_empty(&mut self, source_model_key: &str) -> Result<u64, StoreError> {
+        let source_model_key = source_model_key.trim();
+        if source_model_key.is_empty() || source_model_key == self.model_key {
+            return Ok(0);
+        }
+        let target_count: u64 = self.connection.query_row(
+            "SELECT COUNT(*) FROM model_vector_items WHERE model_id = ?1",
+            [self.model_id],
+            |row| row.get(0),
+        )?;
+        if target_count > 0 {
+            return Ok(0);
+        }
+        let source = self
+            .connection
+            .query_row(
+                "SELECT id, dimension FROM vector_models WHERE model_key = ?1",
+                [source_model_key],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, usize>(1)?)),
+            )
+            .optional()?;
+        let Some((source_id, source_dimension)) = source else {
+            return Ok(0);
+        };
+        if source_dimension != self.dimension {
+            return Err(StoreError::DimensionMismatch {
+                model_key: source_model_key.to_string(),
+                actual: source_dimension,
+                requested: self.dimension,
+            });
+        }
+        let source_table = vector_table_name(source_id);
+        let rows = {
+            let mut statement = self.connection.prepare(&format!(
+                "SELECT i.namespace, i.item_id, i.modality, i.source_key,
+                        i.source_uri, i.content, i.updated_at, v.embedding
+                 FROM model_vector_items i
+                 JOIN {source_table} v ON v.rowid = i.id
+                 WHERE i.model_id = ?1"
+            ))?;
+            statement
+                .query_map([source_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, i64>(6)?,
+                        row.get::<_, Vec<u8>>(7)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let records = rows
+            .into_iter()
+            .map(
+                |(
+                    namespace,
+                    item_id,
+                    modality,
+                    source_key,
+                    source_uri,
+                    content,
+                    updated_at,
+                    blob,
+                )| {
+                    Ok(VectorRecord {
+                        namespace,
+                        item_id,
+                        modality: Modality::parse(&modality)?,
+                        source_key,
+                        source_uri,
+                        content,
+                        updated_at,
+                        embedding: embedding_from_blob(&blob, self.dimension)?,
+                    })
+                },
+            )
+            .collect::<Result<Vec<_>, StoreError>>()?;
+        let imported = records.len() as u64;
+        self.upsert_many(&records)?;
+        Ok(imported)
+    }
+
     pub fn open(
         path: impl AsRef<Path>,
         model_key: impl Into<String>,
@@ -655,6 +774,10 @@ fn embedding_blob(embedding: &[f32]) -> Vec<u8> {
         .collect()
 }
 
+fn vector_table_name(model_id: i64) -> String {
+    format!("model_vectors_{model_id}")
+}
+
 fn embedding_from_blob(blob: &[u8], dimension: usize) -> Result<Vec<f32>, StoreError> {
     let expected = dimension * std::mem::size_of::<f32>();
     if blob.len() != expected {
@@ -941,6 +1064,30 @@ mod tests {
                 .unwrap();
             assert_eq!(table_count, 2);
         }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn imports_vectors_from_a_legacy_model_key_once() {
+        let path = temporary_database_path("import");
+        {
+            let mut legacy = VectorStore::open(&path, "legacy", 2).unwrap();
+            legacy
+                .upsert(&record("item", Modality::Image, vec![1.0, 0.0]))
+                .unwrap();
+        }
+        let mut current = VectorStore::open(&path, "current", 2).unwrap();
+        assert_eq!(current.import_model_if_empty("legacy").unwrap(), 1);
+        assert_eq!(current.import_model_if_empty("legacy").unwrap(), 0);
+        assert_eq!(current.count("library-a").unwrap(), 1);
+        assert_eq!(
+            current
+                .search("library-a", Some(Modality::Image), &[1.0, 0.0], 1)
+                .unwrap()[0]
+                .item_id,
+            "item"
+        );
+        drop(current);
         std::fs::remove_file(path).unwrap();
     }
 

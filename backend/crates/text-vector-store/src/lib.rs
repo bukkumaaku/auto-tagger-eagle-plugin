@@ -238,6 +238,80 @@ impl TextVectorStore {
         self.dimension
     }
 
+    pub fn import_model_if_empty(&mut self, source_model_key: &str) -> Result<u64, StoreError> {
+        let source_model_key = source_model_key.trim();
+        if source_model_key.is_empty() || source_model_key == self.model_key {
+            return Ok(0);
+        }
+        let target_count: u64 = self.connection.query_row(
+            "SELECT COUNT(*) FROM text_model_embeddings WHERE model_id = ?1",
+            [self.model_id],
+            |row| row.get(0),
+        )?;
+        if target_count > 0 {
+            return Ok(0);
+        }
+        let source = self
+            .connection
+            .query_row(
+                "SELECT id, dimension FROM text_vector_models WHERE model_key = ?1",
+                [source_model_key],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, usize>(1)?)),
+            )
+            .optional()?;
+        let Some((source_id, source_dimension)) = source else {
+            return Ok(0);
+        };
+        if source_dimension != self.dimension {
+            return Err(StoreError::DimensionMismatch {
+                model_key: source_model_key.to_string(),
+                actual: source_dimension,
+                requested: self.dimension,
+            });
+        }
+        let source_table = vector_table_name(source_id);
+        let rows = {
+            let mut statement = self.connection.prepare(&format!(
+                "SELECT e.document_row_id, e.document_revision,
+                        d.namespace, d.kind, v.embedding
+                 FROM text_model_embeddings e
+                 JOIN text_documents d ON d.id = e.document_row_id
+                 JOIN {source_table} v ON v.rowid = e.id
+                 WHERE e.model_id = ?1"
+            ))?;
+            statement
+                .query_map([source_id], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, Vec<u8>>(4)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let transaction = self.connection.transaction()?;
+        for (document_row_id, document_revision, namespace, kind, embedding) in &rows {
+            transaction.execute(
+                "INSERT INTO text_model_embeddings(model_id, document_row_id, document_revision)
+                 VALUES (?1, ?2, ?3)",
+                params![self.model_id, document_row_id, document_revision],
+            )?;
+            let row_id = transaction.last_insert_rowid();
+            transaction.execute(
+                &format!(
+                    "INSERT INTO {}(rowid, embedding, namespace, kind)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    self.vector_table
+                ),
+                params![row_id, embedding, namespace, kind],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(rows.len() as u64)
+    }
+
     pub fn sqlite_vec_version(&self) -> Result<String, StoreError> {
         Ok(self
             .connection
@@ -1095,6 +1169,23 @@ mod tests {
         assert_eq!(
             second.search("library-a", "tag", &[0.0, 1.0], 1).unwrap()[0].content,
             "beach and coast"
+        );
+    }
+
+    #[test]
+    fn imports_embeddings_from_a_legacy_model_key_once() {
+        let database = TempDatabase::new("import");
+        let mut legacy = TextVectorStore::open(database.path(), "legacy", 2).unwrap();
+        legacy
+            .upsert(&vector("beach", "beach", vec![1.0, 0.0]))
+            .unwrap();
+        let mut current = TextVectorStore::open(database.path(), "current", 2).unwrap();
+        assert_eq!(current.import_model_if_empty("legacy").unwrap(), 1);
+        assert_eq!(current.import_model_if_empty("legacy").unwrap(), 0);
+        assert_eq!(current.count_embeddings("library-a", "tag").unwrap(), 1);
+        assert_eq!(
+            current.search("library-a", "tag", &[1.0, 0.0], 1).unwrap()[0].content,
+            "beach"
         );
     }
 

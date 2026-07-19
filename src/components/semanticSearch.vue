@@ -93,6 +93,7 @@
         selectionKey: string;
         endpoint: string;
         apiKey: string;
+        legacyModelKey: string;
     };
 
     const activeTab = ref("index");
@@ -188,14 +189,29 @@
     });
     const remoteModelKey = (
         provider: "open_ai" | "gemini",
+        endpoint: string,
         model: string,
         dimension: number,
     ) => {
         const identity = [
             provider,
+            endpoint.trim().replace(/\/+$/, ""),
             model.trim(),
             dimension,
         ].join("\u0000");
+        const digest = crypto
+            .createHash("sha256")
+            .update(identity, "utf8")
+            .digest("hex")
+            .slice(0, 16);
+        return `${provider}:${model}:${dimension || "auto"}:${digest}`;
+    };
+    const legacyRemoteModelKey = (
+        provider: "open_ai" | "gemini",
+        model: string,
+        dimension: number,
+    ) => {
+        const identity = [provider, model.trim(), dimension].join("\u0000");
         const digest = crypto
             .createHash("sha256")
             .update(identity, "utf8")
@@ -351,15 +367,16 @@
                     selectionKey: model.modelKey,
                     endpoint: "",
                     apiKey: "",
+                    legacyModelKey: "",
                 })),
-                ...profiles.filter((profile) => profile.model && profile.endpoint).map((profile) => ({ name: `${profile.name || profile.model} · ${profile.model}`, modelKey: remoteModelKey(profile.provider, profile.model, profile.provider === "gemini" ? profile.dimension : 0), modelPath: "", tokenizerPath: "", dimension: profile.provider === "gemini" ? profile.dimension : 0, provider: profile.provider, remoteModel: profile.model, selectionKey: `remote:${profile.id}`, endpoint: profile.endpoint, apiKey: profile.apiKey })),
+                ...profiles.filter((profile) => profile.model && profile.endpoint).map((profile) => ({ name: `${profile.name || profile.model} · ${profile.model}`, modelKey: remoteModelKey(profile.provider, profile.endpoint, profile.model, profile.provider === "gemini" ? profile.dimension : 0), modelPath: "", tokenizerPath: "", dimension: profile.provider === "gemini" ? profile.dimension : 0, provider: profile.provider, remoteModel: profile.model, selectionKey: `remote:${profile.id}`, endpoint: profile.endpoint, apiKey: profile.apiKey, legacyModelKey: legacyRemoteModelKey(profile.provider, profile.model, profile.provider === "gemini" ? profile.dimension : 0) })),
             ];
             if (
                 !models.value.some(
                     (model) => model.selectionKey === selectedModel.value,
                 )
             ) {
-                selectedModel.value = models.value[0]?.modelKey || "";
+                selectedModel.value = models.value[0]?.selectionKey || "";
             }
         } finally {
             isLoadingModels.value = false;
@@ -381,6 +398,7 @@
                 namespace,
                 modelKey: model.modelKey,
                 dimension: model.dimension,
+                legacyModelKey: model.legacyModelKey,
             });
             indexedCount.value = status.indexedCount;
             tagDocumentCount.value = status.tagDocumentCount;
@@ -389,12 +407,7 @@
             annotationDocumentCount.value = status.annotationDocumentCount;
             annotationIndexedCount.value = status.annotationIndexedCount;
         } catch {
-            indexedCount.value = 0;
-            tagDocumentCount.value = 0;
-            tagIndexedCount.value = 0;
-            tagLinkCount.value = 0;
-            annotationDocumentCount.value = 0;
-            annotationIndexedCount.value = 0;
+            indexStatus.value = "索引状态读取失败";
         }
     }
 
@@ -449,6 +462,7 @@
                 model.apiKey,
                 model.remoteModel,
                 model.provider === "gemini" ? model.dimension : 0,
+                model.legacyModelKey,
             );
             indexedCount.value = result.indexedCount;
             tagDocumentCount.value = result.tagDocumentCount;
@@ -494,6 +508,23 @@
                 IMAGE_EXTENSIONS.has(String(item.ext || "").toLowerCase()) &&
                 Boolean(item.filePath || item.thumbnailPath),
         );
+    }
+
+    async function getLibraryItemIds(): Promise<string[]> {
+        let items: Array<{ id?: string; isDeleted?: boolean }>;
+        try {
+            items = await eagle.item.get({ fields: ["id", "isDeleted"] });
+        } catch {
+            items = await eagle.item.getAll();
+        }
+        const ids = items
+            .filter((item) => !item.isDeleted && typeof item.id === "string")
+            .map((item) => item.id as string)
+            .filter(Boolean);
+        if (ids.length === 0 && items.length > 0) {
+            throw new Error("无法完整读取图库条目 ID，已取消索引清理");
+        }
+        return [...new Set(ids)];
     }
 
     function applyLibraryCounts(images: EagleImage[]) {
@@ -575,7 +606,11 @@
             if (images.length === 0) {
                 throw new Error("没有找到可索引的图片，已保留现有索引");
             }
-            if (!targetItems) { const pruneResult = await getBackendClient().pruneEmbedding(SESSION_ID, images.map((image) => image.id)); indexedCount.value = pruneResult.totalIndexed; }
+            if (!targetItems) {
+                const itemIds = await getLibraryItemIds();
+                const pruneResult = await getBackendClient().pruneEmbedding(SESSION_ID, itemIds);
+                indexedCount.value = pruneResult.totalIndexed;
+            }
             totalImages.value = images.length;
             updateTask(taskId, {
                 detail: "正在建立索引",
@@ -772,10 +807,11 @@
             updateTask(taskId, { detail: "正在比对 Eagle 图片与索引" });
             await ensureSession();
             const images = await getLibraryImages();
+            const itemIds = await getLibraryItemIds();
             applyLibraryCounts(images);
             healthResult.value = await getBackendClient().embeddingHealth(
                 SESSION_ID,
-                images.map((image) => image.id),
+                itemIds,
             );
             for (const item of healthResult.value.missingFiles) {
                 recordFailure({
@@ -806,18 +842,19 @@
         if (!taskId) return;
         try {
             const images = await getLibraryImages();
+            const itemIds = await getLibraryItemIds();
             if (images.length === 0) {
                 throw new Error("没有找到当前图片，已取消清理");
             }
             updateTask(taskId, { detail: "正在删除冗余向量" });
             const result = await getBackendClient().pruneEmbedding(
                 SESSION_ID,
-                images.map((image) => image.id),
+                itemIds,
             );
             indexedCount.value = result.totalIndexed;
             healthResult.value = await getBackendClient().embeddingHealth(
                 SESSION_ID,
-                images.map((image) => image.id),
+                itemIds,
             );
             completeTask(taskId, `已清理 ${result.removedCount} 条`);
             notification(`已清理 ${result.removedCount} 条冗余索引`, "success");

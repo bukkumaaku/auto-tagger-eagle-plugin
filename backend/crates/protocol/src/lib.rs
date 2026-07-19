@@ -113,6 +113,8 @@ pub struct EmbeddingLoadRequest {
     pub remote_model: String,
     #[serde(default)]
     pub remote_dimension: usize,
+    #[serde(default)]
+    pub legacy_model_key: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -212,6 +214,8 @@ pub struct EmbeddingStatusRequest {
     pub model_key: String,
     #[serde(default)]
     pub dimension: usize,
+    #[serde(default)]
+    pub legacy_model_key: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
