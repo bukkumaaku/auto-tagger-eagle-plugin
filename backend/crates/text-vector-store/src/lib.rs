@@ -238,17 +238,9 @@ impl TextVectorStore {
         self.dimension
     }
 
-    pub fn import_model_if_empty(&mut self, source_model_key: &str) -> Result<u64, StoreError> {
+    pub fn merge_model(&mut self, source_model_key: &str) -> Result<u64, StoreError> {
         let source_model_key = source_model_key.trim();
         if source_model_key.is_empty() || source_model_key == self.model_key {
-            return Ok(0);
-        }
-        let target_count: u64 = self.connection.query_row(
-            "SELECT COUNT(*) FROM text_model_embeddings WHERE model_id = ?1",
-            [self.model_id],
-            |row| row.get(0),
-        )?;
-        if target_count > 0 {
             return Ok(0);
         }
         let source = self
@@ -277,10 +269,14 @@ impl TextVectorStore {
                  FROM text_model_embeddings e
                  JOIN text_documents d ON d.id = e.document_row_id
                  JOIN {source_table} v ON v.rowid = e.id
-                 WHERE e.model_id = ?1"
+                 LEFT JOIN text_model_embeddings target
+                   ON target.model_id = ?2
+                  AND target.document_row_id = e.document_row_id
+                 WHERE e.model_id = ?1
+                   AND (target.id IS NULL OR e.document_revision > target.document_revision)"
             ))?;
             statement
-                .query_map([source_id], |row| {
+                .query_map(params![source_id, self.model_id], |row| {
                     Ok((
                         row.get::<_, i64>(0)?,
                         row.get::<_, i64>(1)?,
@@ -295,10 +291,21 @@ impl TextVectorStore {
         for (document_row_id, document_revision, namespace, kind, embedding) in &rows {
             transaction.execute(
                 "INSERT INTO text_model_embeddings(model_id, document_row_id, document_revision)
-                 VALUES (?1, ?2, ?3)",
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT(model_id, document_row_id) DO UPDATE SET
+                     document_revision = excluded.document_revision",
                 params![self.model_id, document_row_id, document_revision],
             )?;
-            let row_id = transaction.last_insert_rowid();
+            let row_id = transaction.query_row(
+                "SELECT id FROM text_model_embeddings
+                 WHERE model_id = ?1 AND document_row_id = ?2",
+                params![self.model_id, document_row_id],
+                |row| row.get::<_, i64>(0),
+            )?;
+            transaction.execute(
+                &format!("DELETE FROM {} WHERE rowid = ?1", self.vector_table),
+                [row_id],
+            )?;
             transaction.execute(
                 &format!(
                     "INSERT INTO {}(rowid, embedding, namespace, kind)
@@ -1173,19 +1180,32 @@ mod tests {
     }
 
     #[test]
-    fn imports_embeddings_from_a_legacy_model_key_once() {
+    fn merges_embeddings_from_a_legacy_model_key() {
         let database = TempDatabase::new("import");
         let mut legacy = TextVectorStore::open(database.path(), "legacy", 2).unwrap();
         legacy
-            .upsert(&vector("beach", "beach", vec![1.0, 0.0]))
+            .upsert(&vector("legacy", "legacy", vec![1.0, 0.0]))
+            .unwrap();
+        legacy
+            .upsert(&vector("shared", "old shared", vec![1.0, 0.0]))
             .unwrap();
         let mut current = TextVectorStore::open(database.path(), "current", 2).unwrap();
-        assert_eq!(current.import_model_if_empty("legacy").unwrap(), 1);
-        assert_eq!(current.import_model_if_empty("legacy").unwrap(), 0);
-        assert_eq!(current.count_embeddings("library-a", "tag").unwrap(), 1);
+        current
+            .upsert(&vector("shared", "new shared", vec![0.0, 1.0]))
+            .unwrap();
+        assert_eq!(current.merge_model("legacy").unwrap(), 1);
+        assert_eq!(current.merge_model("legacy").unwrap(), 0);
+        assert_eq!(current.count_embeddings("library-a", "tag").unwrap(), 2);
+        assert!(
+            current
+                .search("library-a", "tag", &[1.0, 0.0], 2)
+                .unwrap()
+                .iter()
+                .any(|result| result.document_id == "legacy")
+        );
         assert_eq!(
-            current.search("library-a", "tag", &[1.0, 0.0], 1).unwrap()[0].content,
-            "beach"
+            current.search("library-a", "tag", &[0.0, 1.0], 1).unwrap()[0].document_id,
+            "shared"
         );
     }
 

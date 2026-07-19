@@ -960,13 +960,13 @@ fn create_session(settings: EmbeddingSessionSettings) -> Result<EmbeddingSession
     .map_err(|error| error.to_string())?;
     if !settings.legacy_model_key.is_empty() && settings.legacy_model_key != settings.model_key {
         store
-            .import_model_if_empty(&settings.legacy_model_key)
+            .merge_model(&settings.legacy_model_key)
             .map_err(|error| error.to_string())?;
         tag_store
-            .import_model_if_empty(&format!("{}::tag", settings.legacy_model_key))
+            .merge_model(&format!("{}::tag", settings.legacy_model_key))
             .map_err(|error| error.to_string())?;
         annotation_store
-            .import_model_if_empty(&format!("{}::annotation", settings.legacy_model_key))
+            .merge_model(&format!("{}::annotation", settings.legacy_model_key))
             .map_err(|error| error.to_string())?;
     }
     Ok(EmbeddingSession {

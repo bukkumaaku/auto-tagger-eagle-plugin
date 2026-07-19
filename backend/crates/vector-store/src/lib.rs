@@ -159,17 +159,9 @@ impl VectorStore {
             .optional()?)
     }
 
-    pub fn import_model_if_empty(&mut self, source_model_key: &str) -> Result<u64, StoreError> {
+    pub fn merge_model(&mut self, source_model_key: &str) -> Result<u64, StoreError> {
         let source_model_key = source_model_key.trim();
         if source_model_key.is_empty() || source_model_key == self.model_key {
-            return Ok(0);
-        }
-        let target_count: u64 = self.connection.query_row(
-            "SELECT COUNT(*) FROM model_vector_items WHERE model_id = ?1",
-            [self.model_id],
-            |row| row.get(0),
-        )?;
-        if target_count > 0 {
             return Ok(0);
         }
         let source = self
@@ -197,10 +189,17 @@ impl VectorStore {
                         i.source_uri, i.content, i.updated_at, v.embedding
                  FROM model_vector_items i
                  JOIN {source_table} v ON v.rowid = i.id
-                 WHERE i.model_id = ?1"
+                 LEFT JOIN model_vector_items target
+                   ON target.model_id = ?2
+                  AND target.namespace = i.namespace
+                  AND target.item_id = i.item_id
+                  AND target.modality = i.modality
+                  AND target.source_key = i.source_key
+                 WHERE i.model_id = ?1
+                   AND (target.id IS NULL OR i.updated_at > target.updated_at)"
             ))?;
             statement
-                .query_map([source_id], |row| {
+                .query_map(params![source_id, self.model_id], |row| {
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
@@ -1068,24 +1067,38 @@ mod tests {
     }
 
     #[test]
-    fn imports_vectors_from_a_legacy_model_key_once() {
+    fn merges_vectors_from_a_legacy_model_key() {
         let path = temporary_database_path("import");
         {
             let mut legacy = VectorStore::open(&path, "legacy", 2).unwrap();
             legacy
-                .upsert(&record("item", Modality::Image, vec![1.0, 0.0]))
+                .upsert(&record("legacy-item", Modality::Image, vec![1.0, 0.0]))
+                .unwrap();
+            legacy
+                .upsert(&record("shared-item", Modality::Image, vec![1.0, 0.0]))
                 .unwrap();
         }
         let mut current = VectorStore::open(&path, "current", 2).unwrap();
-        assert_eq!(current.import_model_if_empty("legacy").unwrap(), 1);
-        assert_eq!(current.import_model_if_empty("legacy").unwrap(), 0);
-        assert_eq!(current.count("library-a").unwrap(), 1);
+        let mut current_record = record("shared-item", Modality::Image, vec![0.0, 1.0]);
+        current_record.updated_at = 2;
+        current.upsert(&current_record).unwrap();
+        assert_eq!(current.merge_model("legacy").unwrap(), 1);
+        assert_eq!(current.merge_model("legacy").unwrap(), 0);
+        assert_eq!(current.count("library-a").unwrap(), 2);
         assert_eq!(
             current
                 .search("library-a", Some(Modality::Image), &[1.0, 0.0], 1)
                 .unwrap()[0]
                 .item_id,
-            "item"
+            "legacy-item"
+        );
+        assert_eq!(
+            current
+                .get_embedding("library-a", "shared-item", Modality::Image, "primary")
+                .unwrap()
+                .unwrap()
+                .embedding,
+            vec![0.0, 1.0]
         );
         drop(current);
         std::fs::remove_file(path).unwrap();
