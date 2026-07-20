@@ -27,11 +27,10 @@
 import FormHelp from "./formHelp.vue";
 import { getBackendClient } from "../services/backendClient";
 import {
-    createTaggerBackup,
-    filterCompatibleTaggerBackups,
-    listTaggerBackups,
-    mergeTaggerBackupOptions,
+    createTaggerBackupInDirectory,
+    listTaggerBackupsInDirectory,
     restoreTaggerBackup,
+    scopedTaggerBackupDirectory,
     type TaggerBackupOption,
 } from "../services/taggerBackup";
     import {
@@ -185,8 +184,12 @@ import {
             const items = targetItems || await backenAPI.initialize(isAll);
             const model = await resolveSelectedModel();
             if (!model) throw new Error("无法定位当前 WD 模型目录，已取消打标");
-            await createTaggerBackup(
-                model.modelPath,
+            await createTaggerBackupInDirectory(
+                scopedTaggerBackupDirectory(
+                    config.modelLocation,
+                    TAGGER_BACKUP_SOURCE,
+                    "tags",
+                ),
                 "wd",
                 items,
                 TAGGER_BACKUP_SOURCE,
@@ -269,21 +272,14 @@ import {
 
     const refreshBackups = async () => {
         try {
-            const model = await resolveSelectedModel();
-            if (!model) {
-                backups.value = [];
-            } else {
-                const scoped = await listTaggerBackups(
-                    model.modelPath,
+            backups.value = await listTaggerBackupsInDirectory(
+                scopedTaggerBackupDirectory(
+                    config.modelLocation,
                     TAGGER_BACKUP_SOURCE,
-                );
-                const legacy = await filterCompatibleTaggerBackups(
-                    await listTaggerBackups(model.modelPath),
-                    TAGGER_BACKUP_SOURCE,
-                    (id) => eagle.item.getById(id),
-                );
-                backups.value = mergeTaggerBackupOptions(scoped, legacy);
-            }
+                    "tags",
+                ),
+                "tags",
+            );
             if (!backups.value.some((backup) => backup.value === selectedBackup.value)) {
                 selectedBackup.value = backups.value[0]?.value || "";
             }
@@ -442,12 +438,12 @@ import {
                 :disabled="formData.language !== 'mix'"
             />
         </n-form-item>
-        <n-form-item label="标签与注释备份">
+        <n-form-item label="标签备份">
             <n-select
                 v-model:value="selectedBackup"
                 :options="backups"
                 clearable
-                placeholder="选择要恢复的备份"
+                placeholder="选择要恢复的标签备份"
                 style="width: 70%"
                 :disabled="isTagging || isRestoring || backups.length === 0"
             />
@@ -458,7 +454,7 @@ import {
                 style="margin-left: 10px"
                 @click="restoreSelectedBackup"
             >
-                恢复备份
+                恢复标签
             </n-button>
         </n-form-item>
         <div style="display: flex; flex-direction: column; gap: 10px">

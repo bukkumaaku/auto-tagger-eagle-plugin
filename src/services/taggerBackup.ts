@@ -12,10 +12,12 @@ export type TaggerBackup = {
     createdAt: string;
     operation: "wd" | "llm-tag" | "llm-annotation";
     source?: TaggerBackupSource;
+    category?: TaggerBackupCategory;
     items: TaggerBackupItem[];
 };
 
 export type TaggerBackupSource = "eagle" | "pixcall";
+export type TaggerBackupCategory = "tags" | "annotations";
 
 export type TaggerBackupOption = {
     label: string;
@@ -24,18 +26,10 @@ export type TaggerBackupOption = {
     itemCount: number;
 };
 
-const backupDirectory = (modelFilePath: string, source?: TaggerBackupSource) => {
-    const separator = modelFilePath.includes("\\") ? "\\" : "/";
-    const index = Math.max(modelFilePath.lastIndexOf("/"), modelFilePath.lastIndexOf("\\"));
-    const parent = index >= 0 ? modelFilePath.slice(0, index) : modelFilePath;
-    const directory = `${parent}${separator}backup`;
-    return source ? `${directory}${separator}${source}` : directory;
-};
-
 export const scopedTaggerBackupDirectory = (
     root: string,
     source: TaggerBackupSource,
-    category: "llm",
+    category: TaggerBackupCategory,
 ) => {
     if (!root.trim()) throw new Error("模型目录为空，无法定位备份目录");
     const separator = root.includes("\\") ? "\\" : "/";
@@ -45,20 +39,11 @@ export const scopedTaggerBackupDirectory = (
 const safeOperationName = (operation: TaggerBackup["operation"]) =>
     operation.replace(/[^a-z0-9-]/gi, "-");
 
-export async function createTaggerBackup(
-    modelFilePath: string,
-    operation: TaggerBackup["operation"],
-    items: any[],
-    source?: TaggerBackupSource,
-): Promise<string> {
-    if (!modelFilePath.trim()) throw new Error("模型路径为空，无法创建备份");
-    return createTaggerBackupInDirectory(
-        backupDirectory(modelFilePath, source),
-        operation,
-        items,
-        source,
-    );
-}
+const operationLabel = (operation: TaggerBackup["operation"]) => ({
+    wd: "WD 标签",
+    "llm-tag": "LLM 标签",
+    "llm-annotation": "LLM 注释",
+})[operation];
 
 export async function createTaggerBackupInDirectory(
     directory: string,
@@ -76,6 +61,7 @@ export async function createTaggerBackupInDirectory(
         createdAt,
         operation,
         source,
+        category: operation === "llm-annotation" ? "annotations" : "tags",
         items: items.map((item) => ({
             id: String(item.id),
             name: String(item.name || item.id || ""),
@@ -93,24 +79,21 @@ export async function createTaggerBackupInDirectory(
     return result.path;
 }
 
-export async function listTaggerBackups(
-    modelFilePath: string,
-    source?: TaggerBackupSource,
-): Promise<TaggerBackupOption[]> {
-    if (!modelFilePath.trim()) return [];
-    return listTaggerBackupsInDirectory(backupDirectory(modelFilePath, source));
-}
-
 export async function listTaggerBackupsInDirectory(
     directory: string,
+    expectedCategory?: TaggerBackupCategory,
 ): Promise<TaggerBackupOption[]> {
     if (!directory.trim()) return [];
     const result = await getBackendClient().listBackups(directory);
-    const options = await Promise.all(result.entries.map(async (entry) => {
+    const options = await Promise.all(
+        result.entries.map(async (entry) => {
             try {
                 const backup = await readTaggerBackup(entry.path);
+                const category = backup.category ||
+                    (backup.operation === "llm-annotation" ? "annotations" : "tags");
+                if (expectedCategory && category !== expectedCategory) return null;
                 return {
-                    label: `${backup.createdAt} · ${backup.operation} · ${backup.items.length} 项`,
+                    label: `${backup.createdAt} · ${operationLabel(backup.operation)} · ${backup.items.length} 项`,
                     value: entry.path,
                     createdAt: backup.createdAt,
                     itemCount: backup.items.length,
@@ -118,47 +101,13 @@ export async function listTaggerBackupsInDirectory(
             } catch {
                 return null;
             }
-        }));
-    return options.filter((item): item is TaggerBackupOption => item !== null)
+        }),
+    );
+    return options
+        .filter((item): item is TaggerBackupOption => item !== null)
         .sort((left: TaggerBackupOption, right: TaggerBackupOption) =>
             right.createdAt.localeCompare(left.createdAt),
         );
-}
-
-export async function filterCompatibleTaggerBackups(
-    options: TaggerBackupOption[],
-    source: TaggerBackupSource,
-    getItemById: (id: string) => Promise<any>,
-): Promise<TaggerBackupOption[]> {
-    const checked = await Promise.all(
-        options.map(async (option) => {
-            try {
-                const backup = await readTaggerBackup(option.value);
-                if (backup.source) return backup.source === source ? option : null;
-                for (const item of backup.items.slice(0, 5)) {
-                    try {
-                        if (await getItemById(item.id)) return option;
-                    } catch {
-                        // Try another item from legacy backups before excluding it.
-                    }
-                }
-            } catch {
-                // Invalid backups are excluded from the selector.
-            }
-            return null;
-        }),
-    );
-    return checked.filter((item): item is TaggerBackupOption => item !== null);
-}
-
-export function mergeTaggerBackupOptions(
-    ...groups: TaggerBackupOption[][]
-): TaggerBackupOption[] {
-    const merged = new Map<string, TaggerBackupOption>();
-    for (const option of groups.flat()) merged.set(option.value, option);
-    return Array.from(merged.values()).sort((left, right) =>
-        right.createdAt.localeCompare(left.createdAt),
-    );
 }
 
 export async function restoreTaggerBackup(
@@ -179,8 +128,11 @@ export async function restoreTaggerBackup(
                 skipped++;
                 continue;
             }
-            item.tags = [...saved.tags];
-            item.annotation = saved.annotation;
+            if (backup.operation === "llm-annotation") {
+                item.annotation = saved.annotation;
+            } else {
+                item.tags = [...saved.tags];
+            }
             await item.save();
             restored++;
         } catch {
@@ -190,7 +142,7 @@ export async function restoreTaggerBackup(
     return { restored, skipped };
 }
 
-export async function readTaggerBackup(backupPath: string): Promise<TaggerBackup> {
+async function readTaggerBackup(backupPath: string): Promise<TaggerBackup> {
     const result = await getBackendClient().readBackup(backupPath);
     const parsed = JSON.parse(result.content);
     if (

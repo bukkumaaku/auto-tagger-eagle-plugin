@@ -53,12 +53,10 @@ import downloadModal from "./downloadModal.vue";
 import FormHelp from "./formHelp.vue";
 import {
     createTaggerBackupInDirectory,
-    filterCompatibleTaggerBackups,
-    listTaggerBackups,
     listTaggerBackupsInDirectory,
-    mergeTaggerBackupOptions,
     restoreTaggerBackup,
     scopedTaggerBackupDirectory,
+    type TaggerBackupCategory,
     type TaggerBackupOption,
     } from "../services/taggerBackup";
     import type { RemoteLlmProfile } from "../protocol";
@@ -105,6 +103,9 @@ import {
 
     const formData: Ref<LlmFormData> = ref({} as LlmFormData);
     const promptMode = ref<PromptMode>("tag");
+    const activeBackupCategory = computed<TaggerBackupCategory>(() =>
+        promptMode.value === "annotation" ? "annotations" : "tags",
+    );
     const isReady = ref(false);
     const isProcessing = ref(false);
     const processingStage = ref<ProcessingStage>("idle");
@@ -291,6 +292,7 @@ import {
             completedItems.value = 0;
             totalItems.value = 0;
         }
+        if (isReady.value) void refreshBackups();
     });
 
     onMounted(initializePage);
@@ -352,25 +354,14 @@ import {
 
     const refreshBackups = async () => {
         try {
-            const scoped = await listTaggerBackupsInDirectory(
+            backups.value = await listTaggerBackupsInDirectory(
                 scopedTaggerBackupDirectory(
                     config.modelLocation,
                     TAGGER_BACKUP_SOURCE,
-                    "llm",
+                    activeBackupCategory.value,
                 ),
+                activeBackupCategory.value,
             );
-            let legacy: TaggerBackupOption[] = [];
-            try {
-                const paths = await resolveRuntimePaths();
-                legacy = await filterCompatibleTaggerBackups(
-                    await listTaggerBackups(paths.modelPath),
-                    TAGGER_BACKUP_SOURCE,
-                    (id) => eagle.item.getById(id),
-                );
-            } catch {
-                // Remote LLM works without an installed local model.
-            }
-            backups.value = mergeTaggerBackupOptions(scoped, legacy);
             if (!backups.value.some((backup) => backup.value === selectedBackup.value)) {
                 selectedBackup.value = backups.value[0]?.value || "";
             }
@@ -558,7 +549,7 @@ import {
                 scopedTaggerBackupDirectory(
                     config.modelLocation,
                     TAGGER_BACKUP_SOURCE,
-                    "llm",
+                    mode === "annotation" ? "annotations" : "tags",
                 ),
                 mode === "tag" ? "llm-tag" : "llm-annotation",
                 items,
@@ -879,12 +870,18 @@ import {
                 </div>
             </n-form-item>
 
-            <n-form-item label="标签与注释备份">
+            <n-form-item
+                :label="promptMode === 'annotation' ? '注释备份' : '标签备份'"
+            >
                 <n-select
                     v-model:value="selectedBackup"
                     :options="backups"
                     clearable
-                    placeholder="选择要恢复的备份"
+                    :placeholder="
+                        promptMode === 'annotation'
+                            ? '选择要恢复的注释备份'
+                            : '选择要恢复的标签备份'
+                    "
                     :disabled="isProcessing || isRestoring || backups.length === 0"
                 />
                 <n-button
@@ -894,7 +891,7 @@ import {
                     style="margin-left: 10px"
                     @click="restoreSelectedBackup"
                 >
-                    恢复备份
+                    {{ promptMode === "annotation" ? "恢复注释" : "恢复标签" }}
                 </n-button>
             </n-form-item>
 
