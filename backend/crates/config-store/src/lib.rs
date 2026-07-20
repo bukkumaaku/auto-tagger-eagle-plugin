@@ -59,6 +59,7 @@ pub struct Config {
     pub llm_endpoint: String,
     pub llm_api_key: String,
     pub llm_remote_model: String,
+    pub llm_remote_concurrency: u64,
     pub embedding_provider: String,
     pub embedding_dimension: u64,
     pub embedding_remote_profiles: Vec<RemoteEmbeddingProfile>,
@@ -102,6 +103,7 @@ impl Default for Config {
             llm_endpoint: String::new(),
             llm_api_key: String::new(),
             llm_remote_model: String::new(),
+            llm_remote_concurrency: 4,
             embedding_provider: "open_ai".to_string(),
             embedding_dimension: 1_536,
             embedding_remote_profiles: Vec::new(),
@@ -510,6 +512,7 @@ mod tests {
         assert_eq!(config.splitter, "|");
         assert_eq!(config.llm_tagger_prompt, DEFAULT_LLM_TAG_PROMPT);
         assert_eq!(config.llm_annotation_prompt, DEFAULT_LLM_ANNOTATION_PROMPT);
+        assert_eq!(config.llm_remote_concurrency, 4);
         assert_eq!(config.embedding_model_id, "jina-clip-v2-q8");
         assert!(config.embedding_model_name.is_empty());
         assert_eq!(config.embedding_batch_size, 8);
@@ -538,6 +541,7 @@ mod tests {
         assert_eq!(migrated["modelPath"], "model.onnx");
         assert_eq!(migrated["threshold"], 0.25);
         assert_eq!(migrated["llmTaggerPrompt"], DEFAULT_LLM_TAG_PROMPT);
+        assert_eq!(migrated["llmRemoteConcurrency"], 4);
         assert_eq!(migrated["endpoint"], "$keyring:v1:config.endpoint");
         assert_eq!(migrated["apiKey"], "$keyring:v1:config.api-key");
         assert_eq!(migrated["customKey"], "kept");

@@ -21,6 +21,7 @@ export type Config = {
     llmEndpoint: string;
     llmApiKey: string;
     llmRemoteModel: string;
+    llmRemoteConcurrency: number;
     embeddingProvider: EmbeddingProvider;
     embeddingDimension: number;
     embeddingRemoteProfiles: RemoteEmbeddingProfile[];

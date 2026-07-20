@@ -20,11 +20,21 @@
         ImagesOutline,
         FlashOutline,
     } from "@vicons/ionicons5";
-    import { h, ref, type Component } from "vue";
+    import { computed, h, ref, type Component } from "vue";
     import { backenAPI, t, dialog, config, notification } from "./api/backen";
 
     const collapsed = ref(true);
     const currentPage = ref("wdtype");
+    const pageComponents = {
+        wdtype: wdTypeTagger,
+        llmtype: llmTypeTagger,
+        "semantic-search": semanticSearch,
+        "one-click-workflow": oneClickWorkflow,
+        settings: settingsPanel,
+    };
+    const currentComponent = computed(
+        () => pageComponents[currentPage.value as keyof typeof pageComponents],
+    );
     let updateCheckStarted = false;
 
     async function openReleasePage(url: string) {
@@ -193,11 +203,9 @@
                 />
             </n-layout-sider>
             <n-layout>
-                <wdTypeTagger v-if="currentPage == 'wdtype'" />
-                <llmTypeTagger v-if="currentPage == 'llmtype'" />
-                <semanticSearch v-if="currentPage == 'semantic-search'" />
-                <oneClickWorkflow v-if="currentPage == 'one-click-workflow'" />
-                <settingsPanel v-if="currentPage == 'settings'" />
+                <KeepAlive>
+                    <component :is="currentComponent" />
+                </KeepAlive>
             </n-layout>
         </n-layout>
     </n-layout>

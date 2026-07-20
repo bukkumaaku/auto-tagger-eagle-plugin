@@ -4,6 +4,7 @@
         NForm,
         NFormItem,
         NInput,
+        NInputNumber,
         NIcon,
         NProgress,
         NRadio,
@@ -75,6 +76,7 @@ import {
         llmEndpoint: string;
         llmApiKey: string;
         llmRemoteModel: string;
+        remoteConcurrency: number;
         llmProfileId: string;
         tagPrompt: string;
         annotationPrompt: string;
@@ -155,6 +157,12 @@ import {
     const normalizePromptMode = (value: string): PromptMode =>
         value === "annotation" ? "annotation" : "tag";
 
+    const normalizeRemoteConcurrency = (value: unknown): number => {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed)) return 4;
+        return Math.min(32, Math.max(1, Math.trunc(parsed)));
+    };
+
     const refreshInstalledModels = async (preferredModel = "") => {
         const backend = getBackendClient();
         const installed = await Promise.all(
@@ -200,6 +208,7 @@ import {
             llmEndpoint: activeProfile?.endpoint || config.llmEndpoint || "",
             llmApiKey: activeProfile?.apiKey || config.llmApiKey || "",
             llmRemoteModel: activeProfile?.model || config.llmRemoteModel || "",
+            remoteConcurrency: normalizeRemoteConcurrency(config.llmRemoteConcurrency),
             llmProfileId: activeProfile?.id || "",
             tagPrompt:
                 config.llmTaggerPrompt || DEFAULT_LLM_TAG_PROMPT,
@@ -223,6 +232,7 @@ import {
         config.llmEndpoint = formData.value.llmEndpoint;
         config.llmApiKey = formData.value.llmApiKey;
         config.llmRemoteModel = formData.value.llmRemoteModel;
+        config.llmRemoteConcurrency = normalizeRemoteConcurrency(formData.value.remoteConcurrency);
         config.llmRemoteProfileId = formData.value.llmProfileId;
         config.llmTaggerPrompt = formData.value.tagPrompt;
         config.llmAnnotationPrompt = formData.value.annotationPrompt;
@@ -254,6 +264,7 @@ import {
             formData.value.llmEndpoint,
             formData.value.llmApiKey,
             formData.value.llmRemoteModel,
+            formData.value.remoteConcurrency,
             promptMode.value,
         ],
         schedulePersist,
@@ -566,45 +577,57 @@ import {
             updateTask(taskId, {
                 detail: mode === "tag" ? "正在打标" : "正在写入注释",
             });
-            for (const item of items) {
-                try {
-                    if (
-                        mode === "tag" &&
-                        formData.value.overwrite === "nocover" &&
-                        (item.tags || []).length > 0
-                    ) {
-                        continue;
+            const concurrency = formData.value.llmProvider === "local"
+                ? 1
+                : normalizeRemoteConcurrency(formData.value.remoteConcurrency);
+            let nextIndex = 0;
+            const worker = async () => {
+                while (true) {
+                    const index = nextIndex++;
+                    if (index >= items.length) return;
+                    const item = items[index];
+                    try {
+                        if (
+                            mode === "tag" &&
+                            formData.value.overwrite === "nocover" &&
+                            (item.tags || []).length > 0
+                        ) {
+                            continue;
+                        }
+                        const imagePath = await resolveImagePath(backend, item);
+                        const result = formData.value.llmProvider === "local" ? await backend.processImageWithLlamafile({
+                            sessionId: LLAMAFILE_SESSION_ID,
+                            imagePath,
+                            instruction,
+                            model: formData.value.model.toLowerCase(),
+                            temperature: Number(config.llmTemperature) || 0.5,
+                            maxTokens: Number(config.llmMaxTokens) || 1024,
+                            repetitionPenalty: 1.15,
+                        }) : await backend.processImageWithRemoteVision({ provider: formData.value.llmProvider, endpoint: formData.value.llmEndpoint, apiKey: formData.value.llmApiKey, model: formData.value.llmRemoteModel, imagePath, instruction, temperature: Number(config.llmTemperature) || 0.5, maxTokens: Number(config.llmMaxTokens) || 1024 });
+                        await writeResult(item.id, mode, result.content);
+                    } catch (error) {
+                        const message = error instanceof Error
+                            ? error.message
+                            : String(error);
+                        failures.push(`${item.name || item.id}: ${message}`);
+                        recordFailure({
+                            taskId,
+                            kind: "llm",
+                            itemId: item.id,
+                            name: item.name || item.id,
+                            path: item.filePath || item.thumbnailPath || "",
+                            error: message,
+                        });
+                        console.error("LLM 图片处理失败", item, error);
+                    } finally {
+                        completedItems.value++;
+                        updateTask(taskId, { completed: completedItems.value });
                     }
-                    const imagePath = await resolveImagePath(backend, item);
-                    const result = formData.value.llmProvider === "local" ? await backend.processImageWithLlamafile({
-                        sessionId: LLAMAFILE_SESSION_ID,
-                        imagePath,
-                        instruction,
-                        model: formData.value.model.toLowerCase(),
-                        temperature: Number(config.llmTemperature) || 0.5,
-                        maxTokens: Number(config.llmMaxTokens) || 1024,
-                        repetitionPenalty: 1.15,
-                    }) : await backend.processImageWithRemoteVision({ provider: formData.value.llmProvider, endpoint: formData.value.llmEndpoint, apiKey: formData.value.llmApiKey, model: formData.value.llmRemoteModel, imagePath, instruction, temperature: Number(config.llmTemperature) || 0.5, maxTokens: Number(config.llmMaxTokens) || 1024 });
-                    await writeResult(item.id, mode, result.content);
-                } catch (error) {
-                    const message = error instanceof Error
-                        ? error.message
-                        : String(error);
-                    failures.push(`${item.name || item.id}: ${message}`);
-                    recordFailure({
-                        taskId,
-                        kind: "llm",
-                        itemId: item.id,
-                        name: item.name || item.id,
-                        path: item.filePath || item.thumbnailPath || "",
-                        error: message,
-                    });
-                    console.error("LLM 图片处理失败", item, error);
-                } finally {
-                    completedItems.value++;
-                    updateTask(taskId, { completed: completedItems.value });
                 }
-            }
+            };
+            await Promise.all(
+                Array.from({ length: Math.min(concurrency, items.length) }, worker),
+            );
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             failures.push(message);
@@ -694,6 +717,21 @@ import {
                     v-model:value="modelSource"
                     :options="modelSourceOptions"
                     :disabled="isProcessing"
+                />
+            </n-form-item>
+
+            <n-form-item
+                v-if="formData.llmProvider !== 'local'"
+                label="并发"
+                path="remoteConcurrency"
+            >
+                <n-input-number
+                    v-model:value="formData.remoteConcurrency"
+                    :min="1"
+                    :max="32"
+                    :precision="0"
+                    :disabled="isProcessing"
+                    style="width: 120px"
                 />
             </n-form-item>
 
