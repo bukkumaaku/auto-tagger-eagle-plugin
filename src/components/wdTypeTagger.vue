@@ -59,9 +59,13 @@ import {
         splitter: string;
     };
 
-    const props = withDefaults(defineProps<{ engineOnly?: boolean }>(), {
-        engineOnly: false,
-    });
+    const props = withDefaults(
+        defineProps<{ engineOnly?: boolean; skipBackup?: boolean }>(),
+        {
+            engineOnly: false,
+            skipBackup: false,
+        },
+    );
 
     const disableVideoRead = ref(true);
     const cloneFormData = (value: WdFormData): WdFormData => ({
@@ -219,17 +223,19 @@ import {
             const items = targetItems || await backenAPI.initialize(isAll);
             const model = await resolveSelectedModel();
             if (!model) throw new Error("无法定位当前 WD 模型目录，已取消打标");
-            await createTaggerBackupInDirectory(
-                scopedTaggerBackupDirectory(
-                    config.modelLocation,
+            if (!props.skipBackup) {
+                await createTaggerBackupInDirectory(
+                    scopedTaggerBackupDirectory(
+                        config.modelLocation,
+                        TAGGER_BACKUP_SOURCE,
+                        "tags",
+                    ),
+                    "wd",
+                    items,
                     TAGGER_BACKUP_SOURCE,
-                    "tags",
-                ),
-                "wd",
-                items,
-                TAGGER_BACKUP_SOURCE,
-            );
-            await refreshBackups();
+                );
+                await refreshBackups();
+            }
             allItem.value = items.length;
             completeItem.value = 0;
             updateTask(startedTask, {

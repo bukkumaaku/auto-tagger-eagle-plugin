@@ -1420,9 +1420,14 @@ fn fuse_multimodal_hits(
         .iter()
         .map(|hit| hit.item_id.as_str())
         .collect::<HashSet<_>>();
-    let mut scores: HashMap<String, (f64, f64, f64)> = image_hits
+    let mut scores: HashMap<String, (f64, f64, f64, bool, bool)> = image_hits
         .iter()
-        .map(|hit| (hit.item_id.clone(), (hit.similarity.max(0.0), 0.0, 0.0)))
+        .map(|hit| {
+            (
+                hit.item_id.clone(),
+                (hit.similarity.max(0.0), 0.0, 0.0, false, false),
+            )
+        })
         .collect::<HashMap<_, _>>();
     for (store, kind, enabled) in [
         (annotation_store, "annotation", include_annotations),
@@ -1442,22 +1447,28 @@ fn fuse_multimodal_hits(
                         let similarity = result.similarity.max(0.0);
                         if kind == "annotation" {
                             score.1 = score.1.max(similarity);
+                            score.3 = true;
                         } else {
                             score.2 = score.2.max(similarity);
+                            score.4 = true;
                         }
                     }
                 }
             }
         }
     }
-    let weights = match (include_tags, include_annotations) {
-        (false, false) => (1.0, 0.0, 0.0),
-        (true, false) => (0.8, 0.0, 0.2),
-        (false, true) => (0.6, 0.4, 0.0),
-        (true, true) => (0.5, 0.1, 0.4),
-    };
     for hit in &mut image_hits {
-        let (image, annotation, tag) = scores.get(&hit.item_id).copied().unwrap_or_default();
+        let (image, annotation, tag, has_annotation, has_tag) =
+            scores.get(&hit.item_id).copied().unwrap_or_default();
+        let weights = match (
+            include_tags && has_tag,
+            include_annotations && has_annotation,
+        ) {
+            (false, false) => (1.0, 0.0, 0.0),
+            (true, false) => (0.8, 0.0, 0.2),
+            (false, true) => (0.6, 0.4, 0.0),
+            (true, true) => (0.5, 0.1, 0.4),
+        };
         hit.similarity = image * weights.0 + annotation * weights.1 + tag * weights.2;
     }
     let max_score = image_hits

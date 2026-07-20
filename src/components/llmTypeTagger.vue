@@ -90,6 +90,10 @@ import {
         value: string;
     };
 
+    const props = withDefaults(defineProps<{ skipBackup?: boolean }>(), {
+        skipBackup: false,
+    });
+
     const path = require("node:path");
     const LLAMAFILE_SESSION_ID = "llm-main";
     const TAGGER_BACKUP_SOURCE = "eagle" as const;
@@ -545,17 +549,19 @@ import {
                 return;
             }
             }
-            await createTaggerBackupInDirectory(
-                scopedTaggerBackupDirectory(
-                    config.modelLocation,
+            if (!props.skipBackup) {
+                await createTaggerBackupInDirectory(
+                    scopedTaggerBackupDirectory(
+                        config.modelLocation,
+                        TAGGER_BACKUP_SOURCE,
+                        mode === "annotation" ? "annotations" : "tags",
+                    ),
+                    mode === "tag" ? "llm-tag" : "llm-annotation",
+                    items,
                     TAGGER_BACKUP_SOURCE,
-                    mode === "annotation" ? "annotations" : "tags",
-                ),
-                mode === "tag" ? "llm-tag" : "llm-annotation",
-                items,
-                TAGGER_BACKUP_SOURCE,
-            );
-            await refreshBackups();
+                );
+                await refreshBackups();
+            }
         } catch (error) {
             notification(
                 error instanceof Error ? error.message : String(error),

@@ -16,7 +16,11 @@
         SyncOutline,
     } from "@vicons/ionicons5";
     import { computed, ref } from "vue";
-    import { backenAPI, notification } from "../api/backen";
+    import { backenAPI, config, notification } from "../api/backen";
+    import {
+        createTaggerBackupInDirectory,
+        scopedTaggerBackupDirectory,
+    } from "../services/taggerBackup";
     import llmTypeTagger from "./llmTypeTagger.vue";
     import semanticSearch from "./semanticSearch.vue";
     import wdTypeTagger from "./wdTypeTagger.vue";
@@ -51,6 +55,7 @@
         runTagIndexing: (items: WorkflowItem[]) => Promise<void>;
         runAnnotationIndexing: (items: WorkflowItem[]) => Promise<void>;
     };
+    const TAGGER_BACKUP_SOURCE = "eagle" as const;
 
     const stageDefinitions: Array<{ key: StageKey; label: string }> = [
         { key: "tagging", label: "图片打标" },
@@ -146,6 +151,23 @@
         );
     }
 
+    async function backupWorkflowStage(
+        mode: "wd" | "llm-tag" | "llm-annotation",
+        items: WorkflowItem[],
+    ) {
+        const category = mode === "llm-annotation" ? "annotations" : "tags";
+        await createTaggerBackupInDirectory(
+            scopedTaggerBackupDirectory(
+                config.modelLocation,
+                TAGGER_BACKUP_SOURCE,
+                category,
+            ),
+            mode,
+            items,
+            TAGGER_BACKUP_SOURCE,
+        );
+    }
+
     async function startWorkflow() {
         if (isRunning.value || backenAPI.is_processing) {
             notification("仍有任务正在进行中，请等待", "warning");
@@ -164,14 +186,21 @@
         isRunning.value = true;
         try {
             await waitForEngines();
-            await runStage("tagging", () =>
-                taggerMode.value === "wd"
-                    ? wdRef.value!.runForItems(snapshot)
-                    : llmRef.value!.runForItems(snapshot, "tag"),
-            );
-            await runStage("annotation", () =>
-                llmRef.value!.runForItems(snapshot, "annotation"),
-            );
+            await runStage("tagging", async () => {
+                await backupWorkflowStage(
+                    taggerMode.value === "wd" ? "wd" : "llm-tag",
+                    snapshot,
+                );
+                if (taggerMode.value === "wd") {
+                    await wdRef.value!.runForItems(snapshot);
+                } else {
+                    await llmRef.value!.runForItems(snapshot, "tag");
+                }
+            });
+            await runStage("annotation", async () => {
+                await backupWorkflowStage("llm-annotation", snapshot);
+                await llmRef.value!.runForItems(snapshot, "annotation");
+            });
 
             const refreshedItems = await refreshItems(snapshot);
             await runStage("imageEmbedding", () =>
@@ -257,8 +286,8 @@
         </section>
 
         <div class="workflow-engines" aria-hidden="true">
-            <wdTypeTagger ref="wdRef" engine-only />
-            <llmTypeTagger ref="llmRef" />
+            <wdTypeTagger ref="wdRef" engine-only skip-backup />
+            <llmTypeTagger ref="llmRef" skip-backup />
             <semanticSearch ref="semanticRef" />
         </div>
     </main>
