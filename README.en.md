@@ -4,7 +4,7 @@ English | [简体中文](./README.md)
 
 Eagle Auto Tagger is an Eagle plugin with a Rust backend and Vue interface. It provides image tagging, video tagging, vision-language model processing, and semantic image search.
 
-Current version: `2.0.1`
+Current version: `2.1.0`
 
 ## Features
 
@@ -59,10 +59,10 @@ WD and local embedding inference are handled by Rust: Windows tries DirectML fir
 
 ## Installation
 
-Download the `.eagleplugin` file for your platform from GitHub Releases. The 2.0.1 files are:
+Download the `.eagleplugin` file for your platform from GitHub Releases. The 2.1.0 files are:
 
-- Windows x64: `auto-tagger-eagle-plugin-v2.0.1-win-x64.eagleplugin`
-- macOS ARM64: `auto-tagger-eagle-plugin-v2.0.1-mac-arm64.eagleplugin`
+- Windows x64: `auto-tagger-eagle-plugin-v2.1.0-win-x64.eagleplugin`
+- macOS ARM64: `auto-tagger-eagle-plugin-v2.1.0-mac-arm64.eagleplugin`
 
 Open Eagle, drag the `.eagleplugin` file into the application, and confirm the installation.
 
@@ -171,7 +171,7 @@ cargo test --manifest-path backend/Cargo.toml --workspace
 cargo clippy --manifest-path backend/Cargo.toml --workspace --all-targets -- -D warnings
 ```
 
-GitHub Actions builds Windows x64 and macOS ARM64 when `main` is pushed. Pushing a version-matching `v2.0.1` tag also creates a Release.
+GitHub Actions builds Windows x64 and macOS ARM64 when `main` is pushed. Pushing a version-matching `v2.1.0` tag also creates a Release.
 
 ## Project structure
 

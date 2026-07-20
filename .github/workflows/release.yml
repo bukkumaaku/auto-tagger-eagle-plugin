@@ -134,6 +134,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout release notes
+        uses: actions/checkout@v5
+
       - name: Download build artifacts
         uses: actions/download-artifact@v5
         with:
@@ -144,5 +147,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: release/*.eagleplugin
+          body_path: .github/release-notes/${{ github.ref_name }}.md
           prerelease: ${{ contains(github.ref, '-') }}
           generate_release_notes: true
