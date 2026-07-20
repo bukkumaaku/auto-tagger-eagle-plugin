@@ -55,18 +55,29 @@ export const convertPath = (filePath: string) => {
     }
     return path.resolve(filePath);
 };
+let configWriteQueue: Promise<void> = Promise.resolve();
+
 export const backenAPI = {
     get is_processing() {
         return isTaskRunning.value;
     },
     async getConfig() {
+        await configWriteQueue;
         const result = await getBackendClient().readConfig();
         config = result.config;
         return config;
     },
 
-    async setConfig() {
-        return getBackendClient().writeConfig(config);
+    setConfig() {
+        const snapshot = JSON.parse(JSON.stringify(config)) as Config;
+        const pendingWrite = configWriteQueue.then(() =>
+            getBackendClient().writeConfig(snapshot),
+        );
+        configWriteQueue = pendingWrite.then(
+            () => undefined,
+            () => undefined,
+        );
+        return pendingWrite;
     },
 
     async checkForUpdate() {

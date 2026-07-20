@@ -8,6 +8,8 @@
     margin: 0;
     padding: 0;
     box-sizing: border-box;
+    scrollbar-width: thin;
+    scrollbar-color: #3a4147 #101214;
 }
 
 html,body {
@@ -20,6 +22,31 @@ html,body {
 #app {
     width: 100%;
     height: 100%;
+}
+
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+::-webkit-scrollbar-track {
+    background: #101214;
+}
+
+::-webkit-scrollbar-thumb {
+    min-width: 32px;
+    min-height: 32px;
+    border: 2px solid #101214;
+    border-radius: 5px;
+    background: #3a4147;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #505a62;
+}
+
+::-webkit-scrollbar-corner {
+    background: #101214;
 }
 
 .n-notification-container.n-notification-container--top-right,

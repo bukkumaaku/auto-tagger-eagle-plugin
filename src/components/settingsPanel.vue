@@ -55,9 +55,10 @@
     const selectedLlmProfileId = ref("");
     const showLlamafileDownload = ref(false);
     let saveTimer: ReturnType<typeof setTimeout> | undefined;
+    let suspendAutoSave = false;
 
     const syncConfigToForm = () => {
-        formData.value = {
+        const nextFormData = {
             ...defaultFormData,
             ...Object.fromEntries(
                 Object.keys(defaultFormData).map((key) => [
@@ -67,6 +68,7 @@
                 ]),
             ),
         } as SettingsFormData;
+        formData.value = cloneFormData(nextFormData);
         if (!formData.value.embeddingRemoteProfileId) formData.value.embeddingRemoteProfileId = formData.value.embeddingRemoteProfiles[0]?.id || "";
         if (formData.value.embeddingRemoteProfiles.length === 0 && formData.value.endpoint && formData.value.embeddingModelName) addRemoteProfile(false);
         loadActiveProfile();
@@ -91,11 +93,55 @@
             : formData.value.llmRemoteProfiles[0]?.id || "";
     };
 
-    const activeProfile = () => formData.value.embeddingRemoteProfiles.find((profile) => profile.id === formData.value.embeddingRemoteProfileId);
-    const loadActiveProfile = () => { const profile = activeProfile(); if (!profile) return; formData.value.embeddingProvider = profile.provider; formData.value.endpoint = profile.endpoint; formData.value.apiKey = profile.apiKey; formData.value.embeddingModelName = profile.model; formData.value.embeddingDimension = profile.dimension || 1536; };
-    const addRemoteProfile = (select = true) => { const id = `embedding-${Date.now()}-${Math.random().toString(16).slice(2)}`; formData.value.embeddingRemoteProfiles.push({ id, name: `远程接口 ${formData.value.embeddingRemoteProfiles.length + 1}`, provider: formData.value.embeddingProvider, endpoint: formData.value.endpoint, apiKey: formData.value.apiKey, model: formData.value.embeddingModelName, dimension: formData.value.embeddingDimension }); formData.value.embeddingRemoteProfileId = id; if (select) loadActiveProfile(); };
-    const removeRemoteProfile = () => { const id = formData.value.embeddingRemoteProfileId; formData.value.embeddingRemoteProfiles = formData.value.embeddingRemoteProfiles.filter((profile) => profile.id !== id); formData.value.embeddingRemoteProfileId = formData.value.embeddingRemoteProfiles[0]?.id || ""; loadActiveProfile(); };
-    const updateActiveProfile = () => { const profile = activeProfile(); if (!profile) return; Object.assign(profile, { provider: formData.value.embeddingProvider, endpoint: formData.value.endpoint, apiKey: formData.value.apiKey, model: formData.value.embeddingModelName, dimension: formData.value.embeddingDimension }); };
+    const activeProfile = () =>
+        formData.value.embeddingRemoteProfiles.find(
+            (profile) =>
+                profile.id === formData.value.embeddingRemoteProfileId,
+        );
+    const loadActiveProfile = () => {
+        const profile = activeProfile();
+        if (!profile) return;
+        formData.value.embeddingProvider = profile.provider;
+        formData.value.endpoint = profile.endpoint;
+        formData.value.apiKey = profile.apiKey;
+        formData.value.embeddingModelName = profile.model;
+        formData.value.embeddingDimension = profile.dimension || 1536;
+    };
+    const addRemoteProfile = (select = true) => {
+        const id = `embedding-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        formData.value.embeddingRemoteProfiles.push({
+            id,
+            name: `远程接口 ${formData.value.embeddingRemoteProfiles.length + 1}`,
+            provider: formData.value.embeddingProvider,
+            endpoint: formData.value.endpoint,
+            apiKey: formData.value.apiKey,
+            model: formData.value.embeddingModelName,
+            dimension: formData.value.embeddingDimension,
+        });
+        formData.value.embeddingRemoteProfileId = id;
+        if (select) loadActiveProfile();
+    };
+    const removeRemoteProfile = () => {
+        const id = formData.value.embeddingRemoteProfileId;
+        formData.value.embeddingRemoteProfiles =
+            formData.value.embeddingRemoteProfiles.filter(
+                (profile) => profile.id !== id,
+            );
+        formData.value.embeddingRemoteProfileId =
+            formData.value.embeddingRemoteProfiles[0]?.id || "";
+        loadActiveProfile();
+    };
+    const updateActiveProfile = () => {
+        const profile = activeProfile();
+        if (!profile) return;
+        Object.assign(profile, {
+            provider: formData.value.embeddingProvider,
+            endpoint: formData.value.endpoint,
+            apiKey: formData.value.apiKey,
+            model: formData.value.embeddingModelName,
+            dimension: formData.value.embeddingDimension,
+        });
+    };
     const activeLlmProfile = () => formData.value.llmRemoteProfiles.find(
         (profile) => profile.id === selectedLlmProfileId.value,
     );
@@ -125,7 +171,7 @@
 
     const syncFormToConfig = async () => {
         updateActiveProfile();
-        Object.entries(formData.value).forEach(([key, value]) => {
+        Object.entries(cloneFormData(formData.value)).forEach(([key, value]) => {
             config[key] = value;
         });
         if (
@@ -161,7 +207,7 @@
     watch(
         formData,
         () => {
-            if (!isReady.value) return;
+            if (!isReady.value || suspendAutoSave) return;
             if (saveTimer) clearTimeout(saveTimer);
             saveTimer = setTimeout(() => {
                 saveTimer = undefined;
@@ -187,21 +233,21 @@
         },
     );
 
-    const chooseDirectory = async (key: keyof SettingsFormData) => {
+    const chooseDirectory = async (key: "modelLocation") => {
         const result = await eagle.dialog.showOpenDialog({
             properties: ["openDirectory"],
         });
         if (!result.canceled && result.filePaths?.[0]) {
-            formData.value[key] = result.filePaths[0] as never;
+            formData.value[key] = result.filePaths[0];
         }
     };
 
-    const chooseFile = async (key: keyof SettingsFormData) => {
+    const chooseFile = async (key: "llmRunnerPath") => {
         const result = await eagle.dialog.showOpenDialog({
             properties: ["openFile"],
         });
         if (!result.canceled && result.filePaths?.[0]) {
-            formData.value[key] = result.filePaths[0] as never;
+            formData.value[key] = result.filePaths[0];
         }
     };
 
@@ -234,13 +280,19 @@
     const reset = async () => {
         if (saveTimer) clearTimeout(saveTimer);
         saveTimer = undefined;
-        formData.value = cloneFormData(originalConfig);
-        if (!formData.value.llmRemoteProfiles.some(
-            (profile) => profile.id === selectedLlmProfileId.value,
-        )) {
-            selectedLlmProfileId.value = formData.value.llmRemoteProfiles[0]?.id || "";
+        suspendAutoSave = true;
+        try {
+            formData.value = cloneFormData(originalConfig);
+            if (!formData.value.llmRemoteProfiles.some(
+                (profile) => profile.id === selectedLlmProfileId.value,
+            )) {
+                selectedLlmProfileId.value =
+                    formData.value.llmRemoteProfiles[0]?.id || "";
+            }
+            await syncFormToConfig();
+        } finally {
+            suspendAutoSave = false;
         }
-        await syncFormToConfig();
     };
 </script>
 
@@ -248,7 +300,7 @@
     <n-form
         :model="formData"
         label-placement="left"
-        label-width="auto"
+        :label-width="150"
         class="settings-form"
     >
         <n-form-item :label="t('settings.model_location')" path="modelLocation">
@@ -272,7 +324,6 @@
                 type="primary"
                 secondary
                 :disabled="backenAPI.is_processing"
-                style="margin: auto; margin-right: 0px"
                 @click="openLlamafileDownload"
             >
                 <template #icon>
@@ -355,13 +406,24 @@
             :label="t('settings.embedding_provider')"
             path="embeddingProvider"
         >
-            <n-select v-model:value="formData.embeddingRemoteProfileId" :options="formData.embeddingRemoteProfiles.map((profile) => ({ label: profile.name || profile.model || profile.endpoint, value: profile.id }))" placeholder="选择远程接口" />
+            <n-select
+                v-model:value="formData.embeddingRemoteProfileId"
+                :options="formData.embeddingRemoteProfiles.map((profile) => ({
+                    label: profile.name || profile.model || profile.endpoint,
+                    value: profile.id,
+                }))"
+                placeholder="选择远程接口"
+            />
             <n-button @click="addRemoteProfile()">新增</n-button>
             <n-button :disabled="!formData.embeddingRemoteProfileId" @click="removeRemoteProfile">删除</n-button>
         </n-form-item>
 
         <n-form-item label="接口名称">
-            <n-input v-if="activeProfile()" v-model:value="activeProfile()!.name" placeholder="例如：主站、备用中转站" />
+            <n-input
+                v-if="activeProfile()"
+                v-model:value="activeProfile()!.name"
+                placeholder="例如：主站、备用中转站"
+            />
         </n-form-item>
 
         <n-form-item
@@ -455,17 +517,46 @@
 
 <style scoped>
     .settings-form {
-        width: 75%;
+        width: min(900px, calc(100% - 48px));
         margin: 30px auto 0;
+        padding-bottom: 40px;
     }
 
-    .settings-form :deep(.n-input) {
-        margin-right: 12px;
+    .settings-form :deep(.n-form-item-blank) {
+        min-width: 0;
+        gap: 10px;
+    }
+
+    .settings-form :deep(.n-input),
+    .settings-form :deep(.n-select),
+    .settings-form :deep(.n-input-number) {
+        min-width: 0;
+        flex: 1 1 0;
+    }
+
+    .settings-form :deep(.n-button) {
+        flex: 0 0 auto;
     }
 
     .action-row {
         display: flex;
         gap: 10px;
         justify-content: flex-end;
+    }
+
+    @media (max-width: 720px) {
+        .settings-form {
+            width: calc(100% - 24px);
+            margin-top: 18px;
+        }
+
+        .settings-form :deep(.n-form-item-blank) {
+            flex-wrap: wrap;
+        }
+
+        .settings-form :deep(.n-form-item-blank > .n-input),
+        .settings-form :deep(.n-form-item-blank > .n-select) {
+            flex-basis: calc(100% - 30px);
+        }
     }
 </style>

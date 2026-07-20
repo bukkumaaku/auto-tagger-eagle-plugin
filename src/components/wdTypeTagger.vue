@@ -15,7 +15,15 @@
         NTag,
     } from "naive-ui";
     import { CloudDownloadOutline } from "@vicons/ionicons5";
-    import { onBeforeUnmount, onMounted, ref, watch, type Ref } from "vue";
+    import {
+        onActivated,
+        onBeforeUnmount,
+        onDeactivated,
+        onMounted,
+        ref,
+        watch,
+        type Ref,
+    } from "vue";
     import {
         backenAPI,
         notification,
@@ -51,6 +59,10 @@ import {
         splitter: string;
     };
 
+    const props = withDefaults(defineProps<{ engineOnly?: boolean }>(), {
+        engineOnly: false,
+    });
+
     const disableVideoRead = ref(true);
     const cloneFormData = (value: WdFormData): WdFormData => ({
         ...value,
@@ -62,7 +74,9 @@ import {
     const isTagging = ref(false);
     const taskId = ref("");
     let refreshTimer: ReturnType<typeof setInterval> | undefined;
+    let saveTimer: ReturnType<typeof setTimeout> | undefined;
     let isRefreshing = false;
+    let pageActive = true;
 
     const refreshItemCount = async () => {
         if (isTagging.value || isRefreshing) return;
@@ -79,7 +93,14 @@ import {
     };
 
     const startRefreshTimer = () => {
-        if (refreshTimer || isTagging.value) return;
+        if (
+            refreshTimer ||
+            isTagging.value ||
+            !isReady.value ||
+            !pageActive ||
+            props.engineOnly
+        )
+            return;
         refreshTimer = setInterval(() => void refreshItemCount(), 500);
     };
 
@@ -151,7 +172,21 @@ import {
     };
 
     onMounted(initializePage);
-    onBeforeUnmount(stopRefreshTimer);
+    onActivated(() => {
+        pageActive = true;
+        if (isReady.value) {
+            void refreshItemCount();
+            startRefreshTimer();
+        }
+    });
+    onDeactivated(() => {
+        pageActive = false;
+        stopRefreshTimer();
+    });
+    onBeforeUnmount(() => {
+        stopRefreshTimer();
+        if (saveTimer) clearTimeout(saveTimer);
+    });
     // 提交处理
     const handleSubmit = async (
         isAll = false,
@@ -202,15 +237,15 @@ import {
                 total: items.length,
             });
             const result = await backenAPI.startGetTag(items);
-            if (throwOnFailure && result.failureCount > 0) {
-                throw new Error(`WD 打标有 ${result.failureCount} 个项目失败`);
+            if (result.failureCount > 0) {
+                const error = new Error(
+                    `WD 打标有 ${result.failureCount} 个项目失败`,
+                );
+                if (throwOnFailure) throw error;
+                failTask(startedTask, error);
+            } else {
+                completeTask(startedTask, "打标完成");
             }
-            completeTask(
-                startedTask,
-                result.failureCount > 0
-                    ? `完成，${result.failureCount} 个项目失败`
-                    : "打标完成",
-            );
         } catch (error) {
             workflowError = error;
             failTask(startedTask, error);
@@ -239,10 +274,14 @@ import {
         formData,
         () => {
             if (isReady.value) {
-                formData2Config();
-                void backenAPI.setConfig().catch((error) =>
-                    console.error("保存 WD 配置失败", error),
-                );
+                if (saveTimer) clearTimeout(saveTimer);
+                saveTimer = setTimeout(() => {
+                    saveTimer = undefined;
+                    formData2Config();
+                    void backenAPI.setConfig().catch((error) =>
+                        console.error("保存 WD 配置失败", error),
+                    );
+                }, 200);
             }
         },
         { deep: true },
@@ -321,13 +360,8 @@ import {
         v-if="isReady"
         :model="formData"
         label-placement="left"
-        label-width="auto"
-        style="
-            width: 75% !important;
-            margin: auto auto;
-            position: relative;
-            margin-top: 30px;
-        "
+        :label-width="120"
+        class="wd-form"
     >
         <n-form-item :label="t('index.progress')" path="modelName">
             <n-thing>{{ completeItem }}/{{ allItem }}</n-thing>
@@ -347,14 +381,12 @@ import {
             <n-select
                 v-model:value="formData.modelPath"
                 :options="options"
-                style="width: 70%"
             ></n-select>
             <n-button
                 type="primary"
                 secondary
                 :disabled="isTagging"
                 @click="showModal = true"
-                style="margin: auto; margin-right: 0px"
             >
                 <template #icon>
                     <n-icon><CloudDownloadOutline /></n-icon>
@@ -370,7 +402,7 @@ import {
                 :max="1"
                 :step="0.01"
             />
-            <small style="margin-left: 10px; color: #8f969d">
+            <small class="threshold-hint">
                 WD 类模型建议 0.35，CL、CA 类模型建议 0.75
             </small>
         </n-form-item>
@@ -444,21 +476,19 @@ import {
                 :options="backups"
                 clearable
                 placeholder="选择要恢复的标签备份"
-                style="width: 70%"
                 :disabled="isTagging || isRestoring || backups.length === 0"
             />
             <n-button
                 secondary
                 :loading="isRestoring"
                 :disabled="!selectedBackup || isTagging"
-                style="margin-left: 10px"
                 @click="restoreSelectedBackup"
             >
                 恢复标签
             </n-button>
         </n-form-item>
-        <div style="display: flex; flex-direction: column; gap: 10px">
-            <div style="display: flex; gap: 10px; justify-content: flex-end">
+        <div class="form-actions">
+            <div class="action-row">
                 <n-button
                     type="primary"
                     :disabled="isTagging"
@@ -473,3 +503,56 @@ import {
     </n-form>
     <downloadModal v-model:showModal="showModal" model-type="wd" />
 </template>
+
+<style scoped>
+    .wd-form {
+        width: min(900px, calc(100% - 48px));
+        margin: 30px auto 0;
+        padding-bottom: 40px;
+    }
+
+    .wd-form :deep(.n-form-item-blank) {
+        min-width: 0;
+        gap: 10px;
+    }
+
+    .wd-form :deep(.n-progress),
+    .wd-form :deep(.n-input),
+    .wd-form :deep(.n-input-number),
+    .wd-form :deep(.n-select) {
+        min-width: 0;
+        flex: 1 1 0;
+    }
+
+    .wd-form :deep(.n-button) {
+        flex: 0 0 auto;
+    }
+
+    .threshold-hint {
+        color: #8f969d;
+        line-height: 1.5;
+    }
+
+    .form-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .action-row {
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+    }
+
+    @media (max-width: 720px) {
+        .wd-form {
+            width: calc(100% - 24px);
+            margin-top: 18px;
+        }
+
+        .wd-form :deep(.n-form-item-blank) {
+            flex-wrap: wrap;
+        }
+    }
+</style>
