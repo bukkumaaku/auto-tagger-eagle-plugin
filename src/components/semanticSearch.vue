@@ -528,18 +528,6 @@
             name: string;
             run: () => Promise<unknown>;
         }> = [];
-        if (typeof eagle.item?.list === "function") {
-            attempts.push({
-                name: "eagle.item.list",
-                run: () => eagle.item.list({ limit: 999999 }),
-            });
-        }
-        if (typeof eagle.item?.getAll === "function") {
-            attempts.push({
-                name: "eagle.item.getAll",
-                run: () => eagle.item.getAll(),
-            });
-        }
         if (typeof eagle.item?.get === "function") {
             attempts.push({
                 name: "eagle.item.get",
@@ -559,6 +547,18 @@
                             "annotation",
                         ],
                     }),
+            });
+        }
+        if (typeof eagle.item?.list === "function") {
+            attempts.push({
+                name: "eagle.item.list",
+                run: () => eagle.item.list({ limit: 999999 }),
+            });
+        }
+        if (typeof eagle.item?.getAll === "function") {
+            attempts.push({
+                name: "eagle.item.getAll",
+                run: () => eagle.item.getAll(),
             });
         }
 
@@ -590,9 +590,16 @@
         return items.filter(
             (item) =>
                 !item.isDeleted &&
-                IMAGE_EXTENSIONS.has(String(item.ext || "").toLowerCase()) &&
+                IMAGE_EXTENSIONS.has(itemExtension(item)) &&
                 Boolean(item.filePath || item.thumbnailPath),
         );
+    }
+
+    function itemExtension(item: EagleImage) {
+        const explicit = String(item.ext || "").trim().toLowerCase().replace(/^\./, "");
+        if (explicit) return explicit;
+        const source = item.filePath || item.thumbnailPath || item.name || "";
+        return source.split(/[\\/]/).pop()?.match(/\.([^.]+)$/)?.[1].toLowerCase() || "";
     }
 
     async function getLibraryItemIds(): Promise<string[]> {
