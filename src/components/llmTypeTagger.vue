@@ -52,9 +52,13 @@
 import downloadModal from "./downloadModal.vue";
 import FormHelp from "./formHelp.vue";
 import {
-    createTaggerBackup,
+    createTaggerBackupInDirectory,
+    filterCompatibleTaggerBackups,
     listTaggerBackups,
+    listTaggerBackupsInDirectory,
+    mergeTaggerBackupOptions,
     restoreTaggerBackup,
+    scopedTaggerBackupDirectory,
     type TaggerBackupOption,
     } from "../services/taggerBackup";
     import type { RemoteLlmProfile } from "../protocol";
@@ -90,6 +94,7 @@ import {
 
     const path = require("node:path");
     const LLAMAFILE_SESSION_ID = "llm-main";
+    const TAGGER_BACKUP_SOURCE = "eagle" as const;
     const SUPPORTED_IMAGE_EXTENSIONS = new Set([
         ".jpg",
         ".jpeg",
@@ -347,8 +352,25 @@ import {
 
     const refreshBackups = async () => {
         try {
-            const paths = await resolveRuntimePaths();
-            backups.value = await listTaggerBackups(paths.modelPath);
+            const scoped = await listTaggerBackupsInDirectory(
+                scopedTaggerBackupDirectory(
+                    config.modelLocation,
+                    TAGGER_BACKUP_SOURCE,
+                    "llm",
+                ),
+            );
+            let legacy: TaggerBackupOption[] = [];
+            try {
+                const paths = await resolveRuntimePaths();
+                legacy = await filterCompatibleTaggerBackups(
+                    await listTaggerBackups(paths.modelPath),
+                    TAGGER_BACKUP_SOURCE,
+                    (id) => eagle.item.getById(id),
+                );
+            } catch {
+                // Remote LLM works without an installed local model.
+            }
+            backups.value = mergeTaggerBackupOptions(scoped, legacy);
             if (!backups.value.some((backup) => backup.value === selectedBackup.value)) {
                 selectedBackup.value = backups.value[0]?.value || "";
             }
@@ -365,6 +387,7 @@ import {
             const result = await restoreTaggerBackup(
                 selectedBackup.value,
                 (id) => eagle.item.getById(id),
+                TAGGER_BACKUP_SOURCE,
             );
             notification(`已恢复 ${result.restored} 项，跳过 ${result.skipped} 项`, "success");
         } catch (error) {
@@ -530,13 +553,18 @@ import {
                 if (throwOnFailure) throw new Error("LLM 运行器尚未安装");
                 return;
             }
-            await createTaggerBackup(
-                runtimePaths.modelPath,
+            }
+            await createTaggerBackupInDirectory(
+                scopedTaggerBackupDirectory(
+                    config.modelLocation,
+                    TAGGER_BACKUP_SOURCE,
+                    "llm",
+                ),
                 mode === "tag" ? "llm-tag" : "llm-annotation",
                 items,
+                TAGGER_BACKUP_SOURCE,
             );
             await refreshBackups();
-            }
         } catch (error) {
             notification(
                 error instanceof Error ? error.message : String(error),

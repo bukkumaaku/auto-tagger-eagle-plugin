@@ -28,7 +28,9 @@ import FormHelp from "./formHelp.vue";
 import { getBackendClient } from "../services/backendClient";
 import {
     createTaggerBackup,
+    filterCompatibleTaggerBackups,
     listTaggerBackups,
+    mergeTaggerBackupOptions,
     restoreTaggerBackup,
     type TaggerBackupOption,
 } from "../services/taggerBackup";
@@ -183,7 +185,12 @@ import {
             const items = targetItems || await backenAPI.initialize(isAll);
             const model = await resolveSelectedModel();
             if (!model) throw new Error("无法定位当前 WD 模型目录，已取消打标");
-            await createTaggerBackup(model.modelPath, "wd", items);
+            await createTaggerBackup(
+                model.modelPath,
+                "wd",
+                items,
+                TAGGER_BACKUP_SOURCE,
+            );
             await refreshBackups();
             allItem.value = items.length;
             completeItem.value = 0;
@@ -216,6 +223,8 @@ import {
         }
         if (throwOnFailure && workflowError) throw workflowError;
     };
+
+    const TAGGER_BACKUP_SOURCE = "eagle" as const;
     // 重置表单
     const handleReset = () => {
         if (!originalConfig) return;
@@ -261,7 +270,20 @@ import {
     const refreshBackups = async () => {
         try {
             const model = await resolveSelectedModel();
-            backups.value = model ? await listTaggerBackups(model.modelPath) : [];
+            if (!model) {
+                backups.value = [];
+            } else {
+                const scoped = await listTaggerBackups(
+                    model.modelPath,
+                    TAGGER_BACKUP_SOURCE,
+                );
+                const legacy = await filterCompatibleTaggerBackups(
+                    await listTaggerBackups(model.modelPath),
+                    TAGGER_BACKUP_SOURCE,
+                    (id) => eagle.item.getById(id),
+                );
+                backups.value = mergeTaggerBackupOptions(scoped, legacy);
+            }
             if (!backups.value.some((backup) => backup.value === selectedBackup.value)) {
                 selectedBackup.value = backups.value[0]?.value || "";
             }
@@ -278,6 +300,7 @@ import {
             const result = await restoreTaggerBackup(
                 selectedBackup.value,
                 (id) => eagle.item.getById(id),
+                TAGGER_BACKUP_SOURCE,
             );
             notification(`已恢复 ${result.restored} 项，跳过 ${result.skipped} 项`, "success");
         } catch (error) {
