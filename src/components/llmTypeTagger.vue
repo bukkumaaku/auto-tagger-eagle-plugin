@@ -59,7 +59,10 @@ import {
     type TaggerBackupCategory,
     type TaggerBackupOption,
     } from "../services/taggerBackup";
-    import type { RemoteLlmProfile } from "../protocol";
+    import type {
+        RemoteLlmProfile,
+        RemoteVisionBatchItemResult,
+    } from "../protocol";
 
     type PromptMode = "tag" | "annotation";
     type OverwriteMode = "nocover" | "cover" | "merge";
@@ -673,6 +676,45 @@ import {
                     let lastErrors = new Map<string, Error>();
                     for (let attempt = 1; attempt <= 3 && pending.length > 0; attempt++) {
                         let resultByItemId = new Map<string, { content: string; error: string }>();
+                        const pendingByItemId = new Map(
+                            pending.map((entry) => [entry.item.id, entry]),
+                        );
+                        const writeErrors = new Map<string, Error>();
+                        const writeStarted = new Set<string>();
+                        const writePromises: Promise<void>[] = [];
+                        const queueResultWrite = (
+                            result: RemoteVisionBatchItemResult,
+                        ) => {
+                            resultByItemId.set(result.itemId, {
+                                content: result.content,
+                                error: result.error,
+                            });
+                            if (
+                                result.error ||
+                                writeStarted.has(result.itemId)
+                            ) {
+                                return;
+                            }
+                            const entry = pendingByItemId.get(result.itemId);
+                            if (!entry) return;
+                            writeStarted.add(result.itemId);
+                            writePromises.push(
+                                writeResult(
+                                    entry.item.id,
+                                    mode,
+                                    result.content,
+                                )
+                                    .then(finishItem)
+                                    .catch((error) => {
+                                        writeErrors.set(
+                                            result.itemId,
+                                            error instanceof Error
+                                                ? error
+                                                : new Error(String(error)),
+                                        );
+                                    }),
+                            );
+                        };
                         try {
                             const batch = await backend.processBatchWithRemoteVision({
                                 provider: formData.value.llmProvider,
@@ -687,23 +729,19 @@ import {
                                 temperature: Number(config.llmTemperature) || 0.5,
                                 maxTokens: Number(config.llmMaxTokens) || 1024,
                                 concurrency,
-                            });
-                            resultByItemId = new Map(
-                                batch.results.map((result) => [
-                                    result.itemId,
-                                    {
-                                        content: result.content,
-                                        error: result.error,
-                                    },
-                                ]),
-                            );
+                            }, queueResultWrite);
+                            batch.results.forEach(queueResultWrite);
+                            await Promise.all(writePromises);
                         } catch (error) {
+                            await Promise.all(writePromises);
                             const batchError = error instanceof Error
                                 ? error
                                 : new Error(String(error));
-                            lastErrors = new Map(
-                                pending.map(({ item }) => [item.id, batchError]),
-                            );
+                            for (const entry of pending) {
+                                if (!resultByItemId.has(entry.item.id)) {
+                                    lastErrors.set(entry.item.id, batchError);
+                                }
+                            }
                         }
 
                         const retryItems: typeof pending = [];
@@ -715,8 +753,16 @@ import {
                                         new Error("远程 LLM 未返回该图片的结果");
                                 }
                                 if (result.error) throw new Error(result.error);
-                                await writeResult(entry.item.id, mode, result.content);
-                                finishItem();
+                                const writeError = writeErrors.get(entry.item.id);
+                                if (writeError) throw writeError;
+                                if (!writeStarted.has(entry.item.id)) {
+                                    await writeResult(
+                                        entry.item.id,
+                                        mode,
+                                        result.content,
+                                    );
+                                    finishItem();
+                                }
                             } catch (error) {
                                 const retryError = error instanceof Error
                                     ? error

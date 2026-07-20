@@ -1,11 +1,12 @@
-use super::{HandlerError, HandlerResult};
+use super::{EventEmitter, HandlerError, HandlerResult};
 use gemini_vision::{ClientConfig as GeminiConfig, GeminiVisionClient};
 use openai_vision::{ClientConfig as OpenAiConfig, OpenAiVisionClient};
 use protocol::{
-    RemoteVisionBatchItemResult, RemoteVisionProcessBatchRequest, RemoteVisionProcessBatchResult,
-    RemoteVisionProcessImageRequest, RemoteVisionProcessImageResult, RemoteVisionProvider,
+    ProgressPayload, RemoteVisionBatchItemResult, RemoteVisionProcessBatchRequest,
+    RemoteVisionProcessBatchResult, RemoteVisionProcessImageRequest,
+    RemoteVisionProcessImageResult, RemoteVisionProvider,
 };
-use std::time::Duration;
+use std::{sync::mpsc, thread, time::Duration};
 
 pub fn process_image(
     request: RemoteVisionProcessImageRequest,
@@ -76,6 +77,7 @@ pub fn process_image(
 
 pub fn process_batch(
     request: RemoteVisionProcessBatchRequest,
+    events: &mut dyn EventEmitter,
 ) -> HandlerResult<RemoteVisionProcessBatchResult> {
     if request.images.is_empty() {
         return Ok(RemoteVisionProcessBatchResult {
@@ -87,7 +89,7 @@ pub fn process_batch(
 
     let temperature = request.temperature;
     let max_tokens = request.max_tokens;
-    let results = parallel_map(
+    let results = parallel_map_streaming(
         &request.images,
         request.concurrency,
         |image| match process_image(RemoteVisionProcessImageRequest {
@@ -113,6 +115,7 @@ pub fn process_batch(
                 error: error.message,
             },
         },
+        |result| events.progress(ProgressPayload::RemoteVisionBatchItem(result.clone())),
     )?;
 
     Ok(RemoteVisionProcessBatchResult {
@@ -122,33 +125,58 @@ pub fn process_batch(
     })
 }
 
-fn parallel_map<T, R, F>(items: &[T], max_concurrency: usize, operation: F) -> HandlerResult<Vec<R>>
+fn parallel_map_streaming<T, R, F, P>(
+    items: &[T],
+    max_concurrency: usize,
+    operation: F,
+    mut on_result: P,
+) -> HandlerResult<Vec<R>>
 where
     T: Sync,
     R: Send,
     F: Fn(&T) -> R + Sync,
+    P: FnMut(&R) -> HandlerResult<()>,
 {
     if items.is_empty() {
         return Ok(Vec::new());
     }
     let worker_count = max_concurrency.max(1).min(32).min(items.len());
     let chunk_size = items.len().div_ceil(worker_count);
-    std::thread::scope(|scope| {
+    thread::scope(|scope| {
+        let (sender, receiver) = mpsc::channel();
         let handles = items
             .chunks(chunk_size)
             .map(|chunk| {
                 let operation = &operation;
-                scope.spawn(move || chunk.iter().map(operation).collect::<Vec<_>>())
+                let sender = sender.clone();
+                scope.spawn(move || {
+                    for item in chunk {
+                        let _ = sender.send(operation(item));
+                    }
+                })
             })
             .collect::<Vec<_>>();
+        drop(sender);
         let mut results = Vec::with_capacity(items.len());
+        let mut callback_error = None;
+        for result in receiver {
+            if callback_error.is_none() {
+                if let Err(error) = on_result(&result) {
+                    callback_error = Some(error);
+                }
+            }
+            results.push(result);
+        }
         for handle in handles {
-            results.extend(handle.join().map_err(|_| {
+            handle.join().map_err(|_| {
                 HandlerError::new(
                     "REMOTE_VISION_THREAD_FAILED",
                     "remote vision worker panicked",
                 )
-            })?);
+            })?;
+        }
+        if let Some(error) = callback_error {
+            return Err(error);
         }
         Ok(results)
     })
@@ -166,24 +194,35 @@ mod tests {
         time::Duration,
     };
 
-    use super::parallel_map;
+    use super::parallel_map_streaming;
 
     #[test]
-    fn parallel_map_runs_operations_concurrently_and_preserves_order() {
+    fn parallel_map_streams_results_while_operations_run_concurrently() {
         let active = AtomicUsize::new(0);
         let peak = AtomicUsize::new(0);
         let items = [1, 2, 3, 4];
 
-        let results = parallel_map(&items, 4, |item| {
-            let current = active.fetch_add(1, Ordering::SeqCst) + 1;
-            peak.fetch_max(current, Ordering::SeqCst);
-            thread::sleep(Duration::from_millis(40));
-            active.fetch_sub(1, Ordering::SeqCst);
-            item * 2
-        })
+        let mut emitted = Vec::new();
+        let results = parallel_map_streaming(
+            &items,
+            4,
+            |item| {
+                let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(current, Ordering::SeqCst);
+                thread::sleep(Duration::from_millis(40));
+                active.fetch_sub(1, Ordering::SeqCst);
+                item * 2
+            },
+            |result| {
+                emitted.push(*result);
+                Ok(())
+            },
+        )
         .unwrap();
 
         assert!(peak.load(Ordering::SeqCst) > 1);
-        assert_eq!(results, [2, 4, 6, 8]);
+        assert_eq!(results.len(), 4);
+        assert_eq!(emitted.len(), 4);
+        assert!(results.iter().all(|result| [2, 4, 6, 8].contains(result)));
     }
 }

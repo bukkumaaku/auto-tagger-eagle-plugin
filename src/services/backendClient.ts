@@ -395,7 +395,20 @@ export class BackendClient {
         return this.request("llamafile_unload", { sessionId });
     }
     processImageWithRemoteVision(request: import("../protocol").RemoteVisionProcessImageRequest): Promise<import("../protocol").RemoteVisionProcessImageResult> { return this.request("remote_vision_process_image", request); }
-    processBatchWithRemoteVision(request: import("../protocol").RemoteVisionProcessBatchRequest): Promise<import("../protocol").RemoteVisionProcessBatchResult> { return this.request("remote_vision_process_batch", request); }
+    processBatchWithRemoteVision(
+        request: import("../protocol").RemoteVisionProcessBatchRequest,
+        onItem?: (result: import("../protocol").RemoteVisionBatchItemResult) => void,
+    ): Promise<import("../protocol").RemoteVisionProcessBatchResult> {
+        return this.request(
+            "remote_vision_process_batch",
+            request,
+            (progress) => {
+                if (progress.kind === "remote_vision_batch_item") {
+                    onItem?.(progress.data);
+                }
+            },
+        );
+    }
 
     dispose() {
         this.lines?.close();

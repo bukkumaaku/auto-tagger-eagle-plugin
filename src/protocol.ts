@@ -600,6 +600,7 @@ export type DownloadFileProgress = {
 
 export type ProgressDataMap = {
     download_file: DownloadFileProgress;
+    remote_vision_batch_item: RemoteVisionBatchItemResult;
 };
 
 export type ProgressKind = keyof ProgressDataMap;
