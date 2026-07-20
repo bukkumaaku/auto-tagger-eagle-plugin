@@ -194,6 +194,31 @@ export const llmModelInfo = [
         ],
     },
     {
+        label: "Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q4_K_M",
+        value: "Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q4_K_M",
+        type: "llm",
+        downloadInfo: [
+            {
+                name: "Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q4_K_M",
+                filename:
+                    "Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf",
+                url: "https://huggingface.co/HauhauCS/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive/resolve/main/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf",
+                get dest() {
+                    return getTypedModelPath(this.name, this.filename, "llm");
+                },
+            },
+            {
+                name: "Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q4_K_M",
+                filename:
+                    "mmproj-Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-BF16.gguf",
+                url: "https://huggingface.co/HauhauCS/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive/resolve/main/mmproj-Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-BF16.gguf",
+                get dest() {
+                    return getTypedModelPath(this.name, this.filename, "llm");
+                },
+            },
+        ],
+    },
+    {
         label: "Qwen3VL-8B-Instruct-Q4_K_M",
         value: "Qwen3VL-8B-Instruct-Q4_K_M",
         type: "llm",
