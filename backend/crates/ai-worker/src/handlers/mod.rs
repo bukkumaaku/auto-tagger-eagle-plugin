@@ -168,6 +168,9 @@ impl CommandHandler for BuiltinHandlers {
             Command::RemoteVisionProcessImage(request) => {
                 remote_vision::process_image(request).map(ResultPayload::RemoteVisionProcessImage)
             }
+            Command::RemoteVisionProcessBatch(request) => {
+                remote_vision::process_batch(request).map(ResultPayload::RemoteVisionProcessBatch)
+            }
         }
     }
 

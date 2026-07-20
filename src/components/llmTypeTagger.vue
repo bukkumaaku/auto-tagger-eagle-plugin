@@ -577,25 +577,36 @@ import {
             updateTask(taskId, {
                 detail: mode === "tag" ? "正在打标" : "正在写入注释",
             });
-            const concurrency = formData.value.llmProvider === "local"
-                ? 1
-                : normalizeRemoteConcurrency(formData.value.remoteConcurrency);
-            let nextIndex = 0;
-            const worker = async () => {
-                while (true) {
-                    const index = nextIndex++;
-                    if (index >= items.length) return;
-                    const item = items[index];
+            const finishItem = () => {
+                completedItems.value++;
+                updateTask(taskId, { completed: completedItems.value });
+            };
+            const failItem = (item: any, error: unknown) => {
+                const message = error instanceof Error
+                    ? error.message
+                    : String(error);
+                failures.push(`${item.name || item.id}: ${message}`);
+                recordFailure({
+                    taskId,
+                    kind: "llm",
+                    itemId: item.id,
+                    name: item.name || item.id,
+                    path: item.filePath || item.thumbnailPath || "",
+                    error: message,
+                });
+                console.error("LLM 图片处理失败", item, error);
+            };
+            const shouldSkip = (item: any) =>
+                mode === "tag" &&
+                formData.value.overwrite === "nocover" &&
+                (item.tags || []).length > 0;
+
+            if (formData.value.llmProvider === "local") {
+                for (const item of items) {
                     try {
-                        if (
-                            mode === "tag" &&
-                            formData.value.overwrite === "nocover" &&
-                            (item.tags || []).length > 0
-                        ) {
-                            continue;
-                        }
+                        if (shouldSkip(item)) continue;
                         const imagePath = await resolveImagePath(backend, item);
-                        const result = formData.value.llmProvider === "local" ? await backend.processImageWithLlamafile({
+                        const result = await backend.processImageWithLlamafile({
                             sessionId: LLAMAFILE_SESSION_ID,
                             imagePath,
                             instruction,
@@ -603,31 +614,109 @@ import {
                             temperature: Number(config.llmTemperature) || 0.5,
                             maxTokens: Number(config.llmMaxTokens) || 1024,
                             repetitionPenalty: 1.15,
-                        }) : await backend.processImageWithRemoteVision({ provider: formData.value.llmProvider, endpoint: formData.value.llmEndpoint, apiKey: formData.value.llmApiKey, model: formData.value.llmRemoteModel, imagePath, instruction, temperature: Number(config.llmTemperature) || 0.5, maxTokens: Number(config.llmMaxTokens) || 1024 });
+                        });
                         await writeResult(item.id, mode, result.content);
                     } catch (error) {
-                        const message = error instanceof Error
-                            ? error.message
-                            : String(error);
-                        failures.push(`${item.name || item.id}: ${message}`);
-                        recordFailure({
-                            taskId,
-                            kind: "llm",
-                            itemId: item.id,
-                            name: item.name || item.id,
-                            path: item.filePath || item.thumbnailPath || "",
-                            error: message,
-                        });
-                        console.error("LLM 图片处理失败", item, error);
+                        failItem(item, error);
                     } finally {
-                        completedItems.value++;
-                        updateTask(taskId, { completed: completedItems.value });
+                        finishItem();
                     }
                 }
-            };
-            await Promise.all(
-                Array.from({ length: Math.min(concurrency, items.length) }, worker),
-            );
+            } else {
+                const concurrency = normalizeRemoteConcurrency(
+                    formData.value.remoteConcurrency,
+                );
+                const remoteItems: Array<{ item: any; imagePath: string }> = [];
+                for (const item of items) {
+                    if (shouldSkip(item)) {
+                        finishItem();
+                        continue;
+                    }
+                    try {
+                        remoteItems.push({
+                            item,
+                            imagePath: await resolveImagePath(backend, item),
+                        });
+                    } catch (error) {
+                        failItem(item, error);
+                        finishItem();
+                    }
+                }
+
+                for (let offset = 0; offset < remoteItems.length; offset += concurrency) {
+                    let pending = remoteItems.slice(offset, offset + concurrency);
+                    let lastErrors = new Map<string, Error>();
+                    for (let attempt = 1; attempt <= 3 && pending.length > 0; attempt++) {
+                        let resultByItemId = new Map<string, { content: string; error: string }>();
+                        try {
+                            const batch = await backend.processBatchWithRemoteVision({
+                                provider: formData.value.llmProvider,
+                                endpoint: formData.value.llmEndpoint,
+                                apiKey: formData.value.llmApiKey,
+                                model: formData.value.llmRemoteModel,
+                                images: pending.map(({ item, imagePath }) => ({
+                                    itemId: item.id,
+                                    imagePath,
+                                })),
+                                instruction,
+                                temperature: Number(config.llmTemperature) || 0.5,
+                                maxTokens: Number(config.llmMaxTokens) || 1024,
+                                concurrency,
+                            });
+                            resultByItemId = new Map(
+                                batch.results.map((result) => [
+                                    result.itemId,
+                                    {
+                                        content: result.content,
+                                        error: result.error,
+                                    },
+                                ]),
+                            );
+                        } catch (error) {
+                            const batchError = error instanceof Error
+                                ? error
+                                : new Error(String(error));
+                            lastErrors = new Map(
+                                pending.map(({ item }) => [item.id, batchError]),
+                            );
+                        }
+
+                        const retryItems: typeof pending = [];
+                        for (const entry of pending) {
+                            const result = resultByItemId.get(entry.item.id);
+                            try {
+                                if (!result) {
+                                    throw lastErrors.get(entry.item.id) ||
+                                        new Error("远程 LLM 未返回该图片的结果");
+                                }
+                                if (result.error) throw new Error(result.error);
+                                await writeResult(entry.item.id, mode, result.content);
+                                finishItem();
+                            } catch (error) {
+                                const retryError = error instanceof Error
+                                    ? error
+                                    : new Error(String(error));
+                                lastErrors.set(entry.item.id, retryError);
+                                if (attempt < 3) {
+                                    retryItems.push(entry);
+                                } else {
+                                    failItem(
+                                        entry.item,
+                                        new Error(`${retryError.message}（已重试 2 次）`),
+                                    );
+                                    finishItem();
+                                }
+                            }
+                        }
+                        pending = retryItems;
+                        if (pending.length > 0) {
+                            await new Promise((resolve) =>
+                                setTimeout(resolve, 500 * attempt),
+                            );
+                        }
+                    }
+                }
+            }
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             failures.push(message);

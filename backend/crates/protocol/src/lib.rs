@@ -390,7 +390,7 @@ pub struct LlamafileUnloadRequest {
     pub session_id: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RemoteVisionProvider {
     OpenAi,
@@ -409,6 +409,29 @@ pub struct RemoteVisionProcessImageRequest {
     pub instruction: String,
     pub temperature: Option<f32>,
     pub max_tokens: Option<usize>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteVisionBatchImage {
+    pub item_id: String,
+    pub image_path: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteVisionProcessBatchRequest {
+    pub provider: RemoteVisionProvider,
+    pub endpoint: String,
+    #[serde(default)]
+    pub api_key: String,
+    pub model: String,
+    pub images: Vec<RemoteVisionBatchImage>,
+    pub instruction: String,
+    pub temperature: Option<f32>,
+    pub max_tokens: Option<usize>,
+    #[serde(default)]
+    pub concurrency: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -447,6 +470,7 @@ pub enum Command {
     LlamafileProcessImage(LlamafileProcessImageRequest),
     LlamafileUnload(LlamafileUnloadRequest),
     RemoteVisionProcessImage(RemoteVisionProcessImageRequest),
+    RemoteVisionProcessBatch(RemoteVisionProcessBatchRequest),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -854,6 +878,23 @@ pub struct RemoteVisionProcessImageResult {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RemoteVisionBatchItemResult {
+    pub item_id: String,
+    pub image_path: String,
+    pub content: String,
+    pub error: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteVisionProcessBatchResult {
+    pub provider: RemoteVisionProvider,
+    pub model: String,
+    pub results: Vec<RemoteVisionBatchItemResult>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ErrorPayload {
     pub code: String,
     pub message: String,
@@ -904,6 +945,7 @@ pub enum ResultPayload {
     LlamafileProcessImage(LlamafileProcessImageResult),
     LlamafileUnload(LlamafileUnloadResult),
     RemoteVisionProcessImage(RemoteVisionProcessImageResult),
+    RemoteVisionProcessBatch(RemoteVisionProcessBatchResult),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1246,6 +1288,39 @@ mod tests {
                 assert_eq!(payload.item_ids, ["one", "two"]);
             }
             _ => panic!("expected embedding_health command"),
+        }
+    }
+
+    #[test]
+    fn parses_remote_vision_batch_request() {
+        let json = r#"{
+            "protocolVersion": 1,
+            "requestId": "remote-batch",
+            "type": "remote_vision_process_batch",
+            "payload": {
+                "provider": "open_ai",
+                "endpoint": "https://example.com/v1",
+                "apiKey": "secret",
+                "model": "vision-model",
+                "images": [
+                    {"itemId": "one", "imagePath": "one.png"},
+                    {"itemId": "two", "imagePath": "two.png"}
+                ],
+                "instruction": "describe",
+                "temperature": 0.5,
+                "maxTokens": 1024,
+                "concurrency": 2
+            }
+        }"#;
+
+        let request: Request = serde_json::from_str(json).unwrap();
+        match request.command {
+            Command::RemoteVisionProcessBatch(payload) => {
+                assert_eq!(payload.images.len(), 2);
+                assert_eq!(payload.images[1].item_id, "two");
+                assert_eq!(payload.concurrency, 2);
+            }
+            _ => panic!("expected remote vision batch command"),
         }
     }
 }
