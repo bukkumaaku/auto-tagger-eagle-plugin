@@ -184,10 +184,10 @@ pub fn index_batch(
             .store
             .get_embedding(&namespace, &image.id, Modality::Image, SOURCE_KEY)
             .map_err(store_error)?;
-        if image.modified_at > 0
+        if !request.force
             && stored.as_ref().is_some_and(|stored| {
                 stored.source_uri.as_deref() == Some(image.path.as_str())
-                    && stored.updated_at >= image.modified_at
+                    && (image.modified_at <= 0 || stored.updated_at >= image.modified_at)
             })
         {
             skipped_ids.push(image.id);
@@ -290,6 +290,12 @@ pub fn index_tags(
     let mut session = handle.lock().map_err(session_error)?;
     let session_id = request.session_id.clone();
     let namespace = session.settings.namespace.clone();
+    let force_tag_ids = request
+        .force_tag_ids
+        .iter()
+        .map(|tag| tag.trim().to_string())
+        .filter(|tag| !tag.is_empty())
+        .collect::<HashSet<_>>();
     let mut links = Vec::with_capacity(request.items.len());
     let mut unique_tags = HashMap::<String, ()>::new();
 
@@ -324,10 +330,12 @@ pub fn index_tags(
             .tag_store
             .upsert_document(&document)
             .map_err(store_error)?;
-        if session
-            .tag_store
-            .needs_embedding(&namespace, "tag", tag, tag)
-            .map_err(store_error)?
+        let force_tag = request.force && (force_tag_ids.is_empty() || force_tag_ids.contains(tag));
+        if force_tag
+            || session
+                .tag_store
+                .needs_embedding(&namespace, "tag", tag, tag)
+                .map_err(store_error)?
         {
             documents.push(document);
         }
@@ -444,10 +452,11 @@ pub fn index_annotations(
             content: content.to_string(),
             updated_at: item.updated_at,
         };
-        if session
-            .annotation_store
-            .needs_embedding(&namespace, "annotation", &item.item_id, content)
-            .map_err(store_error)?
+        if request.force
+            || session
+                .annotation_store
+                .needs_embedding(&namespace, "annotation", &item.item_id, content)
+                .map_err(store_error)?
         {
             pending.push(document);
         } else {
@@ -1713,13 +1722,13 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let server = thread::spawn(move || {
-            for _ in 0..3 {
+            for _ in 0..8 {
                 let (mut stream, _) = listener.accept().unwrap();
                 let request = read_http_request(&mut stream);
                 let embedding = if request.contains("dimension probe") {
                     "[1.0,0.0]"
                 } else {
-                    assert!(request.contains("input_image") || request.contains("query"));
+                    assert!(request.contains("input_image") || request.contains("\"input\""));
                     "[0.8,0.6]"
                 };
                 let body = format!(
@@ -1770,12 +1779,127 @@ mod tests {
                     annotation: String::new(),
                     modified_at: 1,
                 }],
+                force: false,
             },
             &sessions,
         )
         .unwrap();
         assert_eq!(indexed.indexed_ids, ["image-1"]);
         assert!(indexed.failures.is_empty());
+
+        let skipped = index_batch(
+            EmbeddingIndexBatchRequest {
+                session_id: "remote".to_string(),
+                images: vec![protocol::EmbeddingImageInput {
+                    id: "image-1".to_string(),
+                    path: image_path.to_string_lossy().into_owned(),
+                    name: "Remote image".to_string(),
+                    annotation: String::new(),
+                    modified_at: 0,
+                }],
+                force: false,
+            },
+            &sessions,
+        )
+        .unwrap();
+        assert_eq!(skipped.skipped_ids, ["image-1"]);
+
+        let forced = index_batch(
+            EmbeddingIndexBatchRequest {
+                session_id: "remote".to_string(),
+                images: vec![protocol::EmbeddingImageInput {
+                    id: "image-1".to_string(),
+                    path: image_path.to_string_lossy().into_owned(),
+                    name: "Remote image".to_string(),
+                    annotation: String::new(),
+                    modified_at: 1,
+                }],
+                force: true,
+            },
+            &sessions,
+        )
+        .unwrap();
+        assert_eq!(forced.indexed_ids, ["image-1"]);
+
+        let tag_item = || protocol::EmbeddingTagInput {
+            item_id: "image-1".to_string(),
+            tags: vec!["beach".to_string()],
+        };
+        let indexed_tags = index_tags(
+            EmbeddingIndexTagsRequest {
+                session_id: "remote".to_string(),
+                items: vec![tag_item()],
+                concurrency: 1,
+                force: false,
+                force_tag_ids: Vec::new(),
+            },
+            &sessions,
+        )
+        .unwrap();
+        assert_eq!(indexed_tags.indexed_tags, 1);
+        let skipped_tags = index_tags(
+            EmbeddingIndexTagsRequest {
+                session_id: "remote".to_string(),
+                items: vec![tag_item()],
+                concurrency: 1,
+                force: false,
+                force_tag_ids: Vec::new(),
+            },
+            &sessions,
+        )
+        .unwrap();
+        assert_eq!(skipped_tags.skipped_tags, 1);
+        let forced_tags = index_tags(
+            EmbeddingIndexTagsRequest {
+                session_id: "remote".to_string(),
+                items: vec![tag_item()],
+                concurrency: 1,
+                force: true,
+                force_tag_ids: vec!["beach".to_string()],
+            },
+            &sessions,
+        )
+        .unwrap();
+        assert_eq!(forced_tags.indexed_tags, 1);
+
+        let annotation_item = || protocol::EmbeddingAnnotationInput {
+            item_id: "image-1".to_string(),
+            annotation: "A beach at sunset".to_string(),
+            updated_at: 1,
+        };
+        let indexed_annotations = index_annotations(
+            EmbeddingIndexAnnotationsRequest {
+                session_id: "remote".to_string(),
+                items: vec![annotation_item()],
+                concurrency: 1,
+                force: false,
+            },
+            &sessions,
+        )
+        .unwrap();
+        assert_eq!(indexed_annotations.indexed_annotations, 1);
+        let skipped_annotations = index_annotations(
+            EmbeddingIndexAnnotationsRequest {
+                session_id: "remote".to_string(),
+                items: vec![annotation_item()],
+                concurrency: 1,
+                force: false,
+            },
+            &sessions,
+        )
+        .unwrap();
+        assert_eq!(skipped_annotations.skipped_annotations, 1);
+        let forced_annotations = index_annotations(
+            EmbeddingIndexAnnotationsRequest {
+                session_id: "remote".to_string(),
+                items: vec![annotation_item()],
+                concurrency: 1,
+                force: true,
+            },
+            &sessions,
+        )
+        .unwrap();
+        assert_eq!(forced_annotations.indexed_annotations, 1);
 
         let results = search_text(
             EmbeddingSearchTextRequest {

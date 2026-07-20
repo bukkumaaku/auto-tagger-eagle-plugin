@@ -27,6 +27,7 @@
         PlayOutline,
         PulseOutline,
         PricetagsOutline,
+        ReloadOutline,
         SearchOutline,
         TrashOutline,
     } from "@vicons/ionicons5";
@@ -47,7 +48,7 @@
         EmbeddingModelInfo,
         EmbeddingSearchHit,
     } from "../protocol";
-    import { backenAPI, config, notification, t } from "../api/backen";
+    import { backenAPI, config, dialog, notification, t } from "../api/backen";
     import { getBackendClient } from "../services/backendClient";
     import {
         beginTask,
@@ -674,7 +675,7 @@
     }
     function toAnnotationInput(item: EagleImage): EmbeddingAnnotationInput { return { itemId: item.id, annotation: String(item.annotation || ""), updatedAt: Number(item.modifiedAt) || 0 }; }
 
-    async function startAnnotationIndexing(targetItems?: EagleImage[]) {
+    async function startAnnotationIndexing(targetItems?: EagleImage[], force = false) {
         if (isIndexing.value || isTagIndexing.value || isAnnotationIndexing.value || isSearching.value) return;
         const taskId = beginTask("embedding", "全局注释向量化"); if (!taskId) return;
         isAnnotationIndexing.value = true; annotationIndexFailures.value = []; annotationIndexStatus.value = "正在加载模型";
@@ -684,7 +685,7 @@
             const size = Math.max(20, batchSize.value * 4);
             for (let offset = 0; offset < images.length; offset += size) {
                 const batch = images.slice(offset, offset + size); annotationIndexStatus.value = `正在处理 ${offset + 1}-${Math.min(offset + batch.length, images.length)}`;
-                const result = await getBackendClient().indexEmbeddingAnnotations(SESSION_ID, batch.map(toAnnotationInput), batchSize.value);
+                const result = await getBackendClient().indexEmbeddingAnnotations(SESSION_ID, batch.map(toAnnotationInput), batchSize.value, force);
                 annotationProcessedItems.value += batch.length; annotationIndexedCount.value = result.totalAnnotations;
                 annotationIndexFailures.value.push(...result.failures.map((failure) => `${failure.itemId}：${failure.error}`));
                 updateTask(taskId, { detail: annotationIndexStatus.value, completed: annotationProcessedItems.value, total: images.length });
@@ -695,7 +696,7 @@
         finally { isAnnotationIndexing.value = false; }
     }
 
-    async function startIndexing(targetItems?: EagleImage[]) {
+    async function startIndexing(targetItems?: EagleImage[], force = false) {
         if (isTagIndexing.value) return;
         if (isIndexing.value) {
             if (isPaused.value) resumeIndexing();
@@ -751,6 +752,7 @@
                 const result = await getBackendClient().indexEmbeddingBatch(
                     SESSION_ID,
                     batch.map(toEmbeddingInput),
+                    force,
                 );
                 processedImages.value += batch.length;
                 updateTask(taskId, {
@@ -794,7 +796,7 @@
         }
     }
 
-    async function startTagIndexing(targetItems?: EagleImage[]) {
+    async function startTagIndexing(targetItems?: EagleImage[], force = false) {
         if (isIndexing.value || isTagIndexing.value || isAnnotationIndexing.value || isSearching.value) return;
         if (backenAPI.is_processing) {
             notification("另一个任务正在运行", "warning");
@@ -813,17 +815,28 @@
             tagTotalItems.value = images.length;
             tagProcessedItems.value = 0;
             const tagBatchSize = Math.max(20, batchSize.value * 4);
+            const forcedTags = new Set<string>();
             updateTask(taskId, {
                 detail: "正在向量化标签",
                 total: images.length,
             });
             for (let offset = 0; offset < images.length; offset += tagBatchSize) {
                 const batch = images.slice(offset, offset + tagBatchSize);
+                const forceTagIds = force
+                    ? batch.flatMap((item) => item.tags || []).filter((tag) => {
+                          const normalized = tag.trim();
+                          if (!normalized || forcedTags.has(normalized)) return false;
+                          forcedTags.add(normalized);
+                          return true;
+                      })
+                    : [];
                 tagIndexStatus.value = `正在处理 ${offset + 1}-${Math.min(offset + batch.length, images.length)}`;
                 const result = await getBackendClient().indexEmbeddingTags(
                     SESSION_ID,
                     batch.map(toTagInput),
                     batchSize.value,
+                    forceTagIds.length > 0,
+                    forceTagIds,
                 );
                 tagProcessedItems.value += batch.length;
                 tagIndexedCount.value = result.totalTags;
@@ -1202,6 +1215,16 @@
         return error instanceof Error ? error.message : String(error);
     }
 
+    function confirmForceIndexing(target: string, action: () => Promise<void>) {
+        dialog.warning({
+            title: "确认强制全部向量化",
+            content: `将忽略已有${target}向量，重新计算当前图库内的全部${target}。此操作可能耗时较长。`,
+            positiveText: "强制全部向量化",
+            negativeText: "取消",
+            onPositiveClick: action,
+        });
+    }
+
     function delay(milliseconds: number) {
         return new Promise((resolve) => setTimeout(resolve, milliseconds));
     }
@@ -1366,6 +1389,18 @@
                                 健康检查
                             </n-button>
                             <n-button
+                                v-if="!isIndexing"
+                                type="warning"
+                                secondary
+                                :disabled="!selectedModel || isTagIndexing || isAnnotationIndexing || isSearching"
+                                @click="confirmForceIndexing('图片', () => startIndexing(undefined, true))"
+                            >
+                                <template #icon>
+                                    <n-icon><ReloadOutline /></n-icon>
+                                </template>
+                                强制全部向量化
+                            </n-button>
+                            <n-button
                                 v-if="!isIndexing || isPaused"
                                 type="primary"
                                 :disabled="!selectedModel"
@@ -1374,7 +1409,7 @@
                                 <template #icon>
                                     <n-icon><PlayOutline /></n-icon>
                                 </template>
-                                {{ isPaused ? "继续" : "开始索引" }}
+                                {{ isPaused ? "继续" : "向量化未处理图片" }}
                             </n-button>
                             <n-button
                                 v-else
@@ -1480,17 +1515,28 @@
                             />
                         </div>
                         <span class="field-label">已建立 {{ tagLinkCount }} 条图片-标签关系</span>
-                        <n-button
-                            type="primary"
-                            :loading="isTagIndexing"
-                            :disabled="!selectedModel || isIndexing || isSearching"
-                            @click="() => startTagIndexing()"
-                        >
-                            <template #icon>
-                                <n-icon><PricetagsOutline /></n-icon>
-                            </template>
-                            {{ isTagIndexing ? "正在向量化" : "开始标签向量化" }}
-                        </n-button>
+                        <n-space>
+                            <n-button
+                                type="warning"
+                                secondary
+                                :disabled="!selectedModel || isIndexing || isTagIndexing || isAnnotationIndexing || isSearching"
+                                @click="confirmForceIndexing('标签文本', () => startTagIndexing(undefined, true))"
+                            >
+                                <template #icon><n-icon><ReloadOutline /></n-icon></template>
+                                强制全部向量化
+                            </n-button>
+                            <n-button
+                                type="primary"
+                                :loading="isTagIndexing"
+                                :disabled="!selectedModel || isIndexing || isAnnotationIndexing || isSearching"
+                                @click="() => startTagIndexing()"
+                            >
+                                <template #icon>
+                                    <n-icon><PricetagsOutline /></n-icon>
+                                </template>
+                                {{ isTagIndexing ? "正在向量化" : "向量化未处理标签" }}
+                            </n-button>
+                        </n-space>
                     </div>
                     <n-alert
                         v-if="tagIndexFailures.length"
@@ -1514,7 +1560,29 @@
                         <div class="metric metric--red"><span>失败</span><strong>{{ annotationIndexFailures.length }}</strong></div>
                     </div>
                     <div class="progress-block"><div class="progress-heading"><span>{{ annotationIndexStatus }}</span><span>{{ annotationProcessedItems }}/{{ annotationTotalItems }}</span></div><n-progress type="line" :percentage="annotationIndexPercentage" :processing="isAnnotationIndexing" indicator-placement="inside" /></div>
-                    <div class="index-actions"><span class="field-label">每张图片最多建立一条注释向量</span><n-button type="primary" :loading="isAnnotationIndexing" :disabled="!selectedModel || isIndexing || isTagIndexing || isSearching" @click="() => startAnnotationIndexing()"><template #icon><n-icon><InformationCircleOutline /></n-icon></template>{{ isAnnotationIndexing ? "正在向量化" : "开始注释向量化" }}</n-button></div>
+                    <div class="index-actions">
+                        <span class="field-label">每张图片最多建立一条注释向量</span>
+                        <n-space>
+                            <n-button
+                                type="warning"
+                                secondary
+                                :disabled="!selectedModel || isIndexing || isTagIndexing || isAnnotationIndexing || isSearching"
+                                @click="confirmForceIndexing('注释', () => startAnnotationIndexing(undefined, true))"
+                            >
+                                <template #icon><n-icon><ReloadOutline /></n-icon></template>
+                                强制全部向量化
+                            </n-button>
+                            <n-button
+                                type="primary"
+                                :loading="isAnnotationIndexing"
+                                :disabled="!selectedModel || isIndexing || isTagIndexing || isSearching"
+                                @click="() => startAnnotationIndexing()"
+                            >
+                                <template #icon><n-icon><InformationCircleOutline /></n-icon></template>
+                                {{ isAnnotationIndexing ? "正在向量化" : "向量化未处理注释" }}
+                            </n-button>
+                        </n-space>
+                    </div>
                     <n-alert v-if="annotationIndexFailures.length" title="未能处理的注释" type="warning" class="failure-alert"><div v-for="failure in annotationIndexFailures.slice(0, 8)" :key="failure">{{ failure }}</div></n-alert>
                 </section>
             </n-tab-pane>

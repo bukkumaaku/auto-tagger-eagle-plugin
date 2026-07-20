@@ -223,22 +223,27 @@ export class BackendClient {
     indexEmbeddingBatch(
         sessionId: string,
         images: EmbeddingImageInput[],
+        force = false,
     ): Promise<EmbeddingIndexBatchResult> {
-        return this.request("embedding_index_batch", { sessionId, images });
+        return this.request("embedding_index_batch", { sessionId, images, force });
     }
 
     indexEmbeddingTags(
         sessionId: string,
         items: EmbeddingTagInput[],
         concurrency: number,
+        force = false,
+        forceTagIds: string[] = [],
     ): Promise<EmbeddingIndexTagsResult> {
         return this.request("embedding_index_tags", {
             sessionId,
             items,
             concurrency,
+            force,
+            forceTagIds,
         });
     }
-    indexEmbeddingAnnotations(sessionId: string, items: import("../protocol").EmbeddingAnnotationInput[], concurrency: number): Promise<import("../protocol").EmbeddingIndexAnnotationsResult> { return this.request("embedding_index_annotations", { sessionId, items, concurrency }); }
+    indexEmbeddingAnnotations(sessionId: string, items: import("../protocol").EmbeddingAnnotationInput[], concurrency: number, force = false): Promise<import("../protocol").EmbeddingIndexAnnotationsResult> { return this.request("embedding_index_annotations", { sessionId, items, concurrency, force }); }
 
     pruneEmbeddingTags(sessionId: string, itemIds: string[]): Promise<EmbeddingPruneTagsResult> {
         return this.request("embedding_prune_tags", { sessionId, itemIds });

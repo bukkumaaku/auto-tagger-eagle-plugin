@@ -122,14 +122,17 @@ export type EmbeddingAnnotationInput = { itemId: string; annotation: string; upd
 export type EmbeddingIndexBatchRequest = {
     sessionId: string;
     images: EmbeddingImageInput[];
+    force: boolean;
 };
 
 export type EmbeddingIndexTagsRequest = {
     sessionId: string;
     items: EmbeddingTagInput[];
     concurrency: number;
+    force: boolean;
+    forceTagIds: string[];
 };
-export type EmbeddingIndexAnnotationsRequest = { sessionId: string; items: EmbeddingAnnotationInput[]; concurrency: number };
+export type EmbeddingIndexAnnotationsRequest = { sessionId: string; items: EmbeddingAnnotationInput[]; concurrency: number; force: boolean };
 
 export type EmbeddingPruneRequest = {
     sessionId: string;
