@@ -275,12 +275,12 @@
                 Math.max(128, Number(config.embeddingDimension) || 1536),
             );
             await refreshModels();
-            await refreshIndexStatus();
             try {
-                await refreshLibraryCounts();
+                await refreshLibraryCounts(true);
             } catch (error) {
                 notification(errorMessage(error), "error");
             }
+            await refreshIndexStatus();
             await persistSettings();
             isReady.value = true;
         } catch (error) {
@@ -631,15 +631,28 @@
         libraryCountsReady.value = true;
     }
 
-    async function refreshLibraryCounts() {
-        try {
-            applyLibraryCounts(await getLibraryImages());
-            libraryReadError.value = "";
-        } catch (error) {
-            libraryCountsReady.value = false;
-            libraryReadError.value = errorMessage(error);
-            console.error("读取 Eagle 图库统计失败", error);
-            throw error;
+    async function refreshLibraryCounts(retryEmpty = false) {
+        const attemptCount = retryEmpty ? 4 : 1;
+        for (let attempt = 0; attempt < attemptCount; attempt++) {
+            try {
+                const images = await getLibraryImages();
+                if (images.length === 0 && attempt + 1 < attemptCount) {
+                    await delay(250 * 2 ** attempt);
+                    continue;
+                }
+                applyLibraryCounts(images);
+                libraryReadError.value = "";
+                return;
+            } catch (error) {
+                if (attempt + 1 < attemptCount) {
+                    await delay(250 * 2 ** attempt);
+                    continue;
+                }
+                libraryCountsReady.value = false;
+                libraryReadError.value = errorMessage(error);
+                console.error("读取 Eagle 图库统计失败", error);
+                throw error;
+            }
         }
     }
 
