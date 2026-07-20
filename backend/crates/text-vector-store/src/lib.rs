@@ -239,10 +239,31 @@ impl TextVectorStore {
     }
 
     pub fn merge_model(&mut self, source_model_key: &str) -> Result<u64, StoreError> {
+        self.merge_model_filtered(source_model_key, None)
+    }
+
+    pub fn merge_model_kind(
+        &mut self,
+        source_model_key: &str,
+        kind: &str,
+    ) -> Result<u64, StoreError> {
+        let kind = kind.trim();
+        if kind.is_empty() {
+            return Ok(0);
+        }
+        self.merge_model_filtered(source_model_key, Some(kind))
+    }
+
+    fn merge_model_filtered(
+        &mut self,
+        source_model_key: &str,
+        kind: Option<&str>,
+    ) -> Result<u64, StoreError> {
         let source_model_key = source_model_key.trim();
         if source_model_key.is_empty() || source_model_key == self.model_key {
             return Ok(0);
         }
+        let kind = kind.unwrap_or("");
         let source = self
             .connection
             .query_row(
@@ -273,10 +294,11 @@ impl TextVectorStore {
                    ON target.model_id = ?2
                   AND target.document_row_id = e.document_row_id
                  WHERE e.model_id = ?1
+                   AND (?3 = '' OR d.kind = ?3)
                    AND (target.id IS NULL OR e.document_revision > target.document_revision)"
             ))?;
             statement
-                .query_map(params![source_id, self.model_id], |row| {
+                .query_map(params![source_id, self.model_id, kind], |row| {
                     Ok((
                         row.get::<_, i64>(0)?,
                         row.get::<_, i64>(1)?,
@@ -1206,6 +1228,34 @@ mod tests {
         assert_eq!(
             current.search("library-a", "tag", &[0.0, 1.0], 1).unwrap()[0].document_id,
             "shared"
+        );
+    }
+
+    #[test]
+    fn merges_only_the_requested_document_kind() {
+        let database = TempDatabase::new("kind-filter");
+        let mut legacy = TextVectorStore::open(database.path(), "legacy", 2).unwrap();
+        legacy
+            .upsert(&vector("tag", "tag", vec![1.0, 0.0]))
+            .unwrap();
+        legacy
+            .upsert(&TextVectorRecord {
+                document: TextDocumentRecord {
+                    namespace: "library-a".to_string(),
+                    kind: "annotation".to_string(),
+                    document_id: "image-1".to_string(),
+                    content: "note".to_string(),
+                    updated_at: 1,
+                },
+                embedding: vec![0.0, 1.0],
+            })
+            .unwrap();
+        let mut current = TextVectorStore::open(database.path(), "current", 2).unwrap();
+        assert_eq!(current.merge_model_kind("legacy", "tag").unwrap(), 1);
+        assert_eq!(current.count_embeddings("library-a", "tag").unwrap(), 1);
+        assert_eq!(
+            current.count_embeddings("library-a", "annotation").unwrap(),
+            0
         );
     }
 

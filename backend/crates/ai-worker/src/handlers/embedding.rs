@@ -724,18 +724,25 @@ pub fn status(
     }
     let store = VectorStore::open(&request.database_path, &status_model_key, dimension)
         .map_err(store_error)?;
-    let tag_store = TextVectorStore::open(
+    let mut tag_store = TextVectorStore::open(
         &request.database_path,
         format!("{}::tag", status_model_key),
         dimension,
     )
     .map_err(store_error)?;
-    let annotation_store = TextVectorStore::open(
+    let mut annotation_store = TextVectorStore::open(
         &request.database_path,
         format!("{}::annotation", status_model_key),
         dimension,
     )
     .map_err(store_error)?;
+    migrate_legacy_text_indexes(
+        &mut tag_store,
+        &mut annotation_store,
+        &status_model_key,
+        &request.legacy_model_key,
+    )
+    .map_err(|error| HandlerError::new("EMBEDDING_MIGRATION_FAILED", error))?;
     Ok(EmbeddingStatusResult {
         session_id: request.session_id,
         model_key: status_model_key,
@@ -927,6 +934,40 @@ pub fn unload(
     })
 }
 
+fn migrate_legacy_text_indexes(
+    tag_store: &mut TextVectorStore,
+    annotation_store: &mut TextVectorStore,
+    current_model_key: &str,
+    legacy_model_key: &str,
+) -> Result<(), String> {
+    let current_model_key = current_model_key.trim();
+    if current_model_key.is_empty() {
+        return Ok(());
+    }
+    let legacy_model_key = legacy_model_key.trim();
+    if !legacy_model_key.is_empty() && legacy_model_key != current_model_key {
+        tag_store
+            .merge_model_kind(&format!("{legacy_model_key}::tag"), "tag")
+            .map_err(|error| error.to_string())?;
+        annotation_store
+            .merge_model_kind(&format!("{legacy_model_key}::annotation"), "annotation")
+            .map_err(|error| error.to_string())?;
+        tag_store
+            .merge_model_kind(legacy_model_key, "tag")
+            .map_err(|error| error.to_string())?;
+        annotation_store
+            .merge_model_kind(legacy_model_key, "annotation")
+            .map_err(|error| error.to_string())?;
+    }
+    tag_store
+        .merge_model_kind(current_model_key, "tag")
+        .map_err(|error| error.to_string())?;
+    annotation_store
+        .merge_model_kind(current_model_key, "annotation")
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 fn create_session(settings: EmbeddingSessionSettings) -> Result<EmbeddingSession, String> {
     let engine = match settings.provider {
         EmbeddingProvider::Local => {
@@ -962,13 +1003,13 @@ fn create_session(settings: EmbeddingSessionSettings) -> Result<EmbeddingSession
         store
             .merge_model(&settings.legacy_model_key)
             .map_err(|error| error.to_string())?;
-        tag_store
-            .merge_model(&format!("{}::tag", settings.legacy_model_key))
-            .map_err(|error| error.to_string())?;
-        annotation_store
-            .merge_model(&format!("{}::annotation", settings.legacy_model_key))
-            .map_err(|error| error.to_string())?;
     }
+    migrate_legacy_text_indexes(
+        &mut tag_store,
+        &mut annotation_store,
+        &settings.model_key,
+        &settings.legacy_model_key,
+    )?;
     Ok(EmbeddingSession {
         settings,
         engine,
@@ -1588,6 +1629,22 @@ mod tests {
                     embedding: vec![1.0, 0.0],
                 })
                 .unwrap();
+            let mut text_store = TextVectorStore::open(&database_path, "legacy", 2).unwrap();
+            text_store
+                .upsert(&TextVectorRecord {
+                    document: TextDocumentRecord {
+                        namespace: "library".to_string(),
+                        kind: "tag".to_string(),
+                        document_id: "beach".to_string(),
+                        content: "beach".to_string(),
+                        updated_at: 1,
+                    },
+                    embedding: vec![1.0, 0.0],
+                })
+                .unwrap();
+            text_store
+                .replace_item_links("library", "tag", "image-1", &["beach".to_string()])
+                .unwrap();
         }
         let result = status(
             EmbeddingStatusRequest {
@@ -1602,6 +1659,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result.indexed_count, 1);
+        assert_eq!(result.tag_document_count, 1);
+        assert_eq!(result.tag_indexed_count, 1);
+        assert_eq!(result.tag_link_count, 1);
         assert_eq!(result.model_key, "legacy");
         std::fs::remove_file(database_path).unwrap();
     }
