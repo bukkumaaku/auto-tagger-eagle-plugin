@@ -9,7 +9,9 @@ import { getBackendClient } from "../services/backendClient";
 import {
     activeTask,
     isTaskRunning,
+    isTaskCancelled,
     recordFailure,
+    waitForTaskControl,
 } from "../services/taskCenter";
 
 const path = require("node:path");
@@ -39,6 +41,7 @@ export const notification = (
 };
 
 export let config = {} as Config;
+export const configRevision = ref(0);
 export const completeItem = ref(0);
 export const t = ref((key: any) => i18next.t(key));
 export const convertPath = (filePath: string) => {
@@ -65,6 +68,7 @@ export const backenAPI = {
         await configWriteQueue;
         const result = await getBackendClient().readConfig();
         config = result.config;
+        configRevision.value++;
         return config;
     },
 
@@ -77,7 +81,10 @@ export const backenAPI = {
             () => undefined,
             () => undefined,
         );
-        return pendingWrite;
+        return pendingWrite.then((result) => {
+            configRevision.value++;
+            return result;
+        });
     },
 
     async checkForUpdate() {
@@ -186,6 +193,7 @@ export const backenAPI = {
                 const ffmpegPaths =
                     await eagle.extraModule.ffmpeg.getPaths();
                 for (const video of videos) {
+                    if (activeTask.value) await waitForTaskControl(activeTask.value.id);
                     if (this.shouldSkipWdItem(video)) {
                         completeItem.value++;
                         continue;
@@ -230,6 +238,7 @@ export const backenAPI = {
                 batchSize,
             );
         } catch (error) {
+            if (isTaskCancelled(error)) throw error;
             console.error("WD 打标失败", error);
             error_image.push(
                 error instanceof Error ? error.message : String(error),
@@ -280,6 +289,7 @@ export const backenAPI = {
     ) {
         let queued = 0;
         for (const item of items) {
+            if (activeTask.value) await waitForTaskControl(activeTask.value.id);
             if (this.shouldSkipWdItem(item)) {
                 completeItem.value++;
                 continue;
@@ -291,11 +301,13 @@ export const backenAPI = {
             queued++;
 
             if (queued === batchSize) {
+                if (activeTask.value) await waitForTaskControl(activeTask.value.id);
                 await this.completeWdImageBatch(backend, sessionId);
                 queued = 0;
             }
         }
         if (queued > 0) {
+            if (activeTask.value) await waitForTaskControl(activeTask.value.id);
             await this.completeWdImageBatch(backend, sessionId);
         }
     },

@@ -2,6 +2,7 @@
     import {
         NAlert,
         NButton,
+        NCheckbox,
         NEmpty,
         NIcon,
         NInput,
@@ -12,7 +13,6 @@
         NSelect,
         NSpace,
         NSpin,
-        NSwitch,
         NTabPane,
         NTabs,
         NTag,
@@ -23,7 +23,6 @@
         ImageOutline,
         InformationCircleOutline,
         OpenOutline,
-        PauseOutline,
         PlayOutline,
         PulseOutline,
         PricetagsOutline,
@@ -48,17 +47,21 @@
         EmbeddingModelInfo,
         EmbeddingSearchHit,
     } from "../protocol";
-    import { backenAPI, config, dialog, notification, t } from "../api/backen";
+    import { backenAPI, config, configRevision, dialog, notification, t } from "../api/backen";
     import { getBackendClient } from "../services/backendClient";
     import {
         beginTask,
+        cancelTask,
         completeTask,
         failTask,
+        isTaskCancelled,
         recordFailure,
         updateTask,
+        waitForTaskControl,
     } from "../services/taskCenter";
     import downloadModal from "./downloadModal.vue";
     import FormHelp from "./formHelp.vue";
+    import TaskControlButtons from "./taskControlButtons.vue";
 
     const SESSION_ID = "embedding-main";
     const INDEX_FILENAME = "semantic-index.sqlite3";
@@ -130,8 +133,6 @@
     const annotationIndexFailures = ref<string[]>([]);
 
     const isIndexing = ref(false);
-    const pauseRequested = ref(false);
-    const isPaused = ref(false);
     const totalImages = ref(0);
     const libraryTagCount = ref(0);
     const libraryCountsReady = ref(false);
@@ -145,6 +146,7 @@
     let disposed = false;
 
     const searchMode = ref<"text" | "image">("text");
+    const includeImages = ref(true);
     const includeTags = ref(false);
     const includeAnnotations = ref(false);
     const queryText = ref("");
@@ -249,6 +251,19 @@
         () => tagIndexedCount.value > 0 && tagLinkCount.value > 0,
     );
     const canIncludeAnnotations = computed(() => annotationIndexedCount.value > 0);
+    const canIncludeImages = computed(() => indexedCount.value > 0);
+    const searchWeightLabel = computed(() => {
+        const key = `${Number(includeImages.value)}${Number(includeAnnotations.value)}${Number(includeTags.value)}`;
+        return {
+            "100": "图片 1.0",
+            "101": "图片 0.8 / 标签 0.2",
+            "110": "图片 0.6 / 注释 0.4",
+            "111": "图片 0.5 / 注释 0.4 / 标签 0.1",
+            "011": "注释 0.7 / 标签 0.3",
+            "010": "仅注释 1.0",
+            "001": "仅标签 1.0",
+        }[key] || "请选择至少一种向量";
+    });
     const annotationPendingCount = computed(() => Math.max(libraryAnnotationCount.value - annotationIndexedCount.value, 0));
     const annotationIndexPercentage = computed(() => annotationTotalItems.value === 0 ? 0 : Number(((annotationProcessedItems.value / annotationTotalItems.value) * 100).toFixed(2)));
     const tagIndexPercentage = computed(() =>
@@ -292,7 +307,6 @@
     onBeforeUnmount(() => {
         disposed = true;
         searchGeneration += 1;
-        pauseRequested.value = false;
         if (previewClickTimer) clearTimeout(previewClickTimer);
         searchResultObserver?.disconnect();
         masonryResizeObserver?.disconnect();
@@ -308,12 +322,16 @@
     watch(batchFieldMax, (maximum) => {
         if (batchSize.value > maximum) batchSize.value = maximum;
     });
+    watch(configRevision, () => {
+        if (isReady.value) void refreshModels();
+    });
     watch(canIncludeTags, (enabled) => {
         if (!enabled) includeTags.value = false;
     });
     watch(canIncludeAnnotations, (enabled) => { if (!enabled) includeAnnotations.value = false; });
+    watch(canIncludeImages, (enabled) => { if (!enabled) includeImages.value = false; });
     watch(searchMode, (mode) => {
-        if (mode !== "text") { includeTags.value = false; includeAnnotations.value = false; }
+        if (mode !== "text") { includeImages.value = true; includeTags.value = false; includeAnnotations.value = false; }
     });
     watch(searchLoadSentinel, (sentinel) => {
         searchResultObserver?.disconnect();
@@ -677,13 +695,14 @@
 
     async function startAnnotationIndexing(targetItems?: EagleImage[], force = false) {
         if (isIndexing.value || isTagIndexing.value || isAnnotationIndexing.value || isSearching.value) return;
-        const taskId = beginTask("embedding", "全局注释向量化"); if (!taskId) return;
+        const taskId = beginTask("embedding", "全局注释向量化"); if (!taskId) return; activeSemanticTaskId.value = taskId;
         isAnnotationIndexing.value = true; annotationIndexFailures.value = []; annotationIndexStatus.value = "正在加载模型";
         try {
             await ensureSession(); const images = targetItems || await getLibraryImages(); applyLibraryCounts(images);
             annotationTotalItems.value = images.length; annotationProcessedItems.value = 0;
             const size = Math.max(20, batchSize.value * 4);
             for (let offset = 0; offset < images.length; offset += size) {
+                await waitForTaskControl(taskId);
                 const batch = images.slice(offset, offset + size); annotationIndexStatus.value = `正在处理 ${offset + 1}-${Math.min(offset + batch.length, images.length)}`;
                 const result = await getBackendClient().indexEmbeddingAnnotations(SESSION_ID, batch.map(toAnnotationInput), batchSize.value, force);
                 annotationProcessedItems.value += batch.length; annotationIndexedCount.value = result.totalAnnotations;
@@ -692,14 +711,13 @@
             }
             if (!targetItems) { const pruned = await getBackendClient().pruneEmbeddingAnnotations(SESSION_ID, images.map((image) => image.id)); annotationIndexedCount.value = pruned.totalAnnotations; }
             annotationIndexStatus.value = annotationIndexFailures.value.length ? "完成，部分注释失败" : "注释索引完成"; completeTask(taskId, annotationIndexStatus.value);
-        } catch (error) { annotationIndexStatus.value = "注释索引失败"; failTask(taskId, error); notification(errorMessage(error), "error"); }
-        finally { isAnnotationIndexing.value = false; }
+        } catch (error) { if (isTaskCancelled(error)) { annotationIndexStatus.value = "已取消"; cancelTask(taskId); } else { annotationIndexStatus.value = "注释索引失败"; failTask(taskId, error); notification(errorMessage(error), "error"); } }
+        finally { isAnnotationIndexing.value = false; activeSemanticTaskId.value = ""; }
     }
 
     async function startIndexing(targetItems?: EagleImage[], force = false) {
         if (isTagIndexing.value) return;
         if (isIndexing.value) {
-            if (isPaused.value) resumeIndexing();
             return;
         }
         if (backenAPI.is_processing) {
@@ -732,21 +750,14 @@
             skippedThisRun.value = 0;
             indexFailures.value = [];
             isIndexing.value = true;
-            isPaused.value = false;
-            pauseRequested.value = false;
 
             for (
                 let offset = 0;
                 offset < images.length && !disposed;
                 offset += batchSize.value
             ) {
-                while (pauseRequested.value && !disposed) {
-                    isPaused.value = true;
-                    indexStatus.value = "已暂停";
-                    await delay(100);
-                }
+                await waitForTaskControl(taskId);
                 if (disposed) break;
-                isPaused.value = false;
                 const batch = images.slice(offset, offset + batchSize.value);
                 indexStatus.value = `正在处理 ${offset + 1}-${Math.min(offset + batch.length, images.length)}`;
                 const result = await getBackendClient().indexEmbeddingBatch(
@@ -785,14 +796,11 @@
                 completeTask(taskId, indexStatus.value);
             }
         } catch (error) {
-            indexStatus.value = "索引失败";
-            failTask(taskId, error);
-            notification(errorMessage(error), "error");
+            if (isTaskCancelled(error)) { indexStatus.value = "已取消"; cancelTask(taskId); }
+            else { indexStatus.value = "索引失败"; failTask(taskId, error); notification(errorMessage(error), "error"); }
         } finally {
             activeSemanticTaskId.value = "";
             isIndexing.value = false;
-            isPaused.value = false;
-            pauseRequested.value = false;
         }
     }
 
@@ -804,6 +812,7 @@
         }
         const taskId = beginTask("embedding", "全局标签向量化");
         if (!taskId) return;
+        activeSemanticTaskId.value = taskId;
         isTagIndexing.value = true;
         tagIndexFailures.value = [];
         tagIndexStatus.value = "正在加载模型";
@@ -821,6 +830,7 @@
                 total: images.length,
             });
             for (let offset = 0; offset < images.length; offset += tagBatchSize) {
+                await waitForTaskControl(taskId);
                 const batch = images.slice(offset, offset + tagBatchSize);
                 const forceTagIds = force
                     ? batch.flatMap((item) => item.tags || []).filter((tag) => {
@@ -861,34 +871,11 @@
                 tagIndexFailures.value.length ? "warning" : "success",
             );
         } catch (error) {
-            tagIndexStatus.value = "标签索引失败";
-            failTask(taskId, error);
-            notification(errorMessage(error), "error");
+            if (isTaskCancelled(error)) { tagIndexStatus.value = "已取消"; cancelTask(taskId); }
+            else { tagIndexStatus.value = "标签索引失败"; failTask(taskId, error); notification(errorMessage(error), "error"); }
         } finally {
             isTagIndexing.value = false;
-        }
-    }
-
-    function pauseIndexing() {
-        pauseRequested.value = true;
-        indexStatus.value = "当前批次完成后暂停";
-        if (activeSemanticTaskId.value) {
-            updateTask(activeSemanticTaskId.value, {
-                detail: indexStatus.value,
-                status: "paused",
-            });
-        }
-    }
-
-    function resumeIndexing() {
-        pauseRequested.value = false;
-        isPaused.value = false;
-        indexStatus.value = "继续索引";
-        if (activeSemanticTaskId.value) {
-            updateTask(activeSemanticTaskId.value, {
-                detail: indexStatus.value,
-                status: "running",
-            });
+            activeSemanticTaskId.value = "";
         }
     }
 
@@ -1008,9 +995,13 @@
                 searchMode.value === "text" &&
                 includeTags.value &&
                 canIncludeTags.value;
+            if (searchMode.value === "text" && !includeImages.value && !useTagFusion && !(includeAnnotations.value && canIncludeAnnotations.value)) {
+                throw new Error("请至少选择图片、注释或标签向量中的一种");
+            }
+            const searchableCount = Math.max(indexedCount.value, tagLinkCount.value, annotationIndexedCount.value);
             const resultCount = Math.max(
                 1,
-                Math.min(indexedCount.value, MAX_SEARCH_RESULTS),
+                Math.min(searchableCount, MAX_SEARCH_RESULTS),
             );
             let hits: EmbeddingSearchHit[];
             if (searchMode.value === "text") {
@@ -1020,6 +1011,7 @@
                         SESSION_ID,
                         queryText.value,
                         resultCount,
+                        includeImages.value && canIncludeImages.value,
                         useTagFusion,
                         includeAnnotations.value && canIncludeAnnotations.value,
                     )
@@ -1055,6 +1047,7 @@
                         SESSION_ID,
                         negativeQueryText.value,
                         resultCount,
+                        includeImages.value && canIncludeImages.value,
                         useTagFusion,
                         includeAnnotations.value && canIncludeAnnotations.value,
                     )
@@ -1323,7 +1316,8 @@
             {{ libraryReadError }}
         </n-alert>
 
-        <n-tabs v-model:value="activeTab" type="line" animated class="feature-tabs">
+        <TaskControlButtons v-if="activeSemanticTaskId" :task-id="activeSemanticTaskId" class="semantic-task-controls" />
+        <n-tabs v-model:value="activeTab" type="line" animated class="feature-tabs" :on-before-leave="() => !activeSemanticTaskId">
             <n-tab-pane name="index" tab="全局图片向量化">
                 <section class="index-panel">
                     <div class="metrics-row">
@@ -1353,7 +1347,7 @@
                         <n-progress
                             type="line"
                             :percentage="indexPercentage"
-                            :processing="isIndexing && !isPaused"
+                            :processing="isIndexing"
                             indicator-placement="inside"
                         />
                     </div>
@@ -1401,7 +1395,7 @@
                                 强制全部向量化
                             </n-button>
                             <n-button
-                                v-if="!isIndexing || isPaused"
+                                v-if="!isIndexing"
                                 type="primary"
                                 :disabled="!selectedModel"
                                 @click="() => startIndexing()"
@@ -1409,17 +1403,7 @@
                                 <template #icon>
                                     <n-icon><PlayOutline /></n-icon>
                                 </template>
-                                {{ isPaused ? "继续" : "向量化未处理图片" }}
-                            </n-button>
-                            <n-button
-                                v-else
-                                :disabled="pauseRequested"
-                                @click="pauseIndexing"
-                            >
-                                <template #icon>
-                                    <n-icon><PauseOutline /></n-icon>
-                                </template>
-                                暂停
+                                向量化未处理图片
                             </n-button>
                         </n-space>
                     </div>
@@ -1600,21 +1584,12 @@
                             <n-radio-button value="text">文字</n-radio-button>
                             <n-radio-button value="image">当前图片</n-radio-button>
                         </n-radio-group>
-                        <n-switch
-                            v-model:value="includeTags"
-                            :disabled="
-                                isSearching ||
-                                isIndexing ||
-                                isTagIndexing ||
-                                searchMode !== 'text' ||
-                                !canIncludeTags
-                            "
-                        >
-                            <template #checked>标签融合</template>
-                            <template #unchecked>仅图片</template>
-                        </n-switch>
-                        <n-switch v-model:value="includeAnnotations" :disabled="isSearching || isIndexing || isTagIndexing || isAnnotationIndexing || searchMode !== 'text' || !canIncludeAnnotations"><template #checked>注释融合</template><template #unchecked>不含注释</template></n-switch>
-                        <n-tag v-if="searchMode === 'text'" size="small" :bordered="false">{{ includeTags && includeAnnotations ? '图片 0.5 / 标签 0.4 / 注释 0.1' : includeTags ? '图片 0.8 / 标签 0.2' : includeAnnotations ? '图片 0.6 / 注释 0.4' : '仅图片 1.0' }}</n-tag>
+                        <n-space v-if="searchMode === 'text'" size="small">
+                            <n-checkbox v-model:checked="includeImages" :disabled="isSearching || isIndexing || !canIncludeImages">图片向量</n-checkbox>
+                            <n-checkbox v-model:checked="includeAnnotations" :disabled="isSearching || isIndexing || isAnnotationIndexing || !canIncludeAnnotations">注释向量</n-checkbox>
+                            <n-checkbox v-model:checked="includeTags" :disabled="isSearching || isIndexing || isTagIndexing || !canIncludeTags">{{ includeTags ? "含标签" : "不含标签" }}</n-checkbox>
+                        </n-space>
+                        <n-tag v-if="searchMode === 'text'" size="small" :bordered="false">{{ searchWeightLabel }}</n-tag>
                         <span v-if="!canIncludeTags" class="field-label">
                             完成标签向量化后可开启
                         </span>

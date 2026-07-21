@@ -22,6 +22,7 @@
     } from "@vicons/ionicons5";
     import { computed, h, ref, type Component } from "vue";
     import { backenAPI, t, dialog, config, notification } from "./api/backen";
+    import { isTaskRunning } from "./services/taskCenter";
 
     const collapsed = ref(true);
     const currentPage = ref("wdtype");
@@ -121,7 +122,7 @@
     ];
 
     const clickOption = (key: string) => {
-        if (backenAPI.is_processing && key !== currentPage.value) {
+        if ((backenAPI.is_processing || isTaskRunning.value) && key !== currentPage.value) {
             notification(
                 t.value("model_download_window.process_checking"),
                 "warning",

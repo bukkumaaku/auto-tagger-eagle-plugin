@@ -33,6 +33,7 @@
     } from "../api/backen";
     import downloadModal from "./downloadModal.vue";
 import FormHelp from "./formHelp.vue";
+import TaskControlButtons from "./taskControlButtons.vue";
 import { getBackendClient } from "../services/backendClient";
 import {
     createTaggerBackupInDirectory,
@@ -43,8 +44,10 @@ import {
 } from "../services/taggerBackup";
     import {
         beginTask,
+        cancelTask,
         completeTask,
         failTask,
+        isTaskCancelled,
         updateTask,
     } from "../services/taskCenter";
 
@@ -254,11 +257,13 @@ import {
             }
         } catch (error) {
             workflowError = error;
-            failTask(startedTask, error);
-            notification(
-                error instanceof Error ? error.message : String(error),
-                "error",
-            );
+            if (isTaskCancelled(error)) {
+                cancelTask(startedTask);
+                notification("WD 打标已取消", "warning");
+            } else {
+                failTask(startedTask, error);
+                notification(error instanceof Error ? error.message : String(error), "error");
+            }
         } finally {
             taskId.value = "";
             isTagging.value = false;
@@ -503,6 +508,7 @@ import {
                 >
                     {{ t("index.confirm") }}
                 </n-button>
+                <TaskControlButtons v-if="taskId" :task-id="taskId" />
                 <n-button @click="handleReset">{{ t("index.reset") }}</n-button>
             </div>
         </div>

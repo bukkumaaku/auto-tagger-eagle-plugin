@@ -39,6 +39,14 @@ pub struct VideoPrediction {
     pub tags: Vec<TagScore>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExtractedFrames {
+    pub video_path: String,
+    pub duration_seconds: f64,
+    pub directory: String,
+    pub frame_paths: Vec<String>,
+}
+
 #[derive(Debug, Error)]
 pub enum VideoTaggerError {
     #[error("another video is already being tagged")]
@@ -127,6 +135,55 @@ pub fn tag_video(
         frames,
         tags,
     })
+}
+
+pub fn extract_video_frames(
+    video_path: &str,
+    ffmpeg_path: &str,
+    ffprobe_path: &str,
+) -> Result<ExtractedFrames, VideoTaggerError> {
+    if !Path::new(video_path).is_file() {
+        return Err(VideoTaggerError::VideoNotFound(video_path.to_string()));
+    }
+    let duration_seconds = probe_duration(ffprobe_path, video_path)?;
+    let timestamps = frame_timestamps(duration_seconds, 6);
+    let temp_frames = TempFrames::create()?;
+    let directory = temp_frames.path().to_string_lossy().into_owned();
+    let mut frame_paths = Vec::with_capacity(timestamps.len());
+    for (index, timestamp_seconds) in timestamps.into_iter().enumerate() {
+        let frame_path = temp_frames.path().join(format!("frame-{index:04}.png"));
+        extract_frame(ffmpeg_path, video_path, timestamp_seconds, &frame_path)?;
+        frame_paths.push(frame_path.to_string_lossy().into_owned());
+    }
+    std::mem::forget(temp_frames);
+    Ok(ExtractedFrames {
+        video_path: video_path.to_string(),
+        duration_seconds,
+        directory,
+        frame_paths,
+    })
+}
+
+pub fn cleanup_extracted_frames(directory: &str) -> io::Result<bool> {
+    let path = Path::new(directory);
+    if !path.exists() {
+        return Ok(false);
+    }
+    let canonical = path.canonicalize()?;
+    let managed_root = std::env::temp_dir()
+        .join("eagle-auto-tagger")
+        .canonicalize()?;
+    let managed_name = canonical
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().starts_with("video-"));
+    if !canonical.starts_with(managed_root) || !managed_name {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "refusing to remove an unmanaged frame directory",
+        ));
+    }
+    fs::remove_dir_all(canonical)?;
+    Ok(true)
 }
 
 fn validate_request(request: &TagVideoRequest) -> Result<(), VideoTaggerError> {
@@ -315,6 +372,16 @@ mod tests {
         let timestamps = frame_timestamps(100.0, 6);
 
         assert_eq!(timestamps, vec![1.0, 20.0, 40.0, 60.0, 80.0, 99.0]);
+    }
+
+    #[test]
+    fn cleanup_only_removes_managed_frame_directories() {
+        let frames = TempFrames::create().unwrap();
+        let directory = frames.path().to_string_lossy().into_owned();
+        std::mem::forget(frames);
+        assert!(cleanup_extracted_frames(&directory).unwrap());
+        assert!(!Path::new(&directory).exists());
+        assert!(cleanup_extracted_frames(&std::env::temp_dir().to_string_lossy()).is_err());
     }
 
     #[test]

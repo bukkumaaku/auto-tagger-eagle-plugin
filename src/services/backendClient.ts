@@ -281,6 +281,7 @@ export class BackendClient {
         sessionId: string,
         text: string,
         topK: number,
+        includeImage = true,
         includeTags = false,
         includeAnnotations = false,
     ): Promise<EmbeddingSearchResult> {
@@ -288,6 +289,7 @@ export class BackendClient {
             sessionId,
             text,
             topK,
+            includeImage,
             includeTags,
             includeAnnotations,
         });
@@ -393,6 +395,14 @@ export class BackendClient {
 
     unloadLlamafile(sessionId: string): Promise<LlamafileUnloadResult> {
         return this.request("llamafile_unload", { sessionId });
+    }
+
+    extractVideoFrames(videoPath: string, ffmpegPath: string, ffprobePath: string) {
+        return this.request("video_extract_frames", { videoPath, ffmpegPath, ffprobePath });
+    }
+
+    cleanupVideoFrames(directory: string) {
+        return this.request("video_cleanup_frames", { directory });
     }
     processImageWithRemoteVision(request: import("../protocol").RemoteVisionProcessImageRequest): Promise<import("../protocol").RemoteVisionProcessImageResult> { return this.request("remote_vision_process_image", request); }
     processBatchWithRemoteVision(

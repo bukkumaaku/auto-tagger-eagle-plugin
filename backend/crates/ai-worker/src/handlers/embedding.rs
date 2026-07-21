@@ -784,8 +784,19 @@ pub fn search_text(
     validate_top_k(request.top_k)?;
     let handle = embedding_session(sessions, &request.session_id)?;
     let mut session = handle.lock().map_err(session_error)?;
-    let available = indexed_count(&session)? as usize;
-    if available == 0 {
+    if !request.include_image && !request.include_tags && !request.include_annotations {
+        return Err(HandlerError::new(
+            "EMBEDDING_SEARCH_MODALITY_EMPTY",
+            "at least one embedding modality must be selected",
+        ));
+    }
+    let image_available = indexed_count(&session)? as usize;
+    let tag_available = tag_link_count(&session)? as usize;
+    let annotation_available = annotation_indexed_count(&session)? as usize;
+    if (!request.include_image || image_available == 0)
+        && (!request.include_tags || tag_available == 0)
+        && (!request.include_annotations || annotation_available == 0)
+    {
         return Ok(EmbeddingSearchResult {
             session_id: request.session_id,
             hits: Vec::new(),
@@ -819,12 +830,20 @@ pub fn search_text(
             .map_err(store_error)?;
         embedding
     };
-    let fetch_count = multimodal_fetch_count(request.top_k, available);
-    let results = session
-        .store
-        .search(&namespace, Some(Modality::Image), &query, fetch_count)
-        .map_err(store_error)?;
-    let hits = search_hits(results, None, fetch_count);
+    let fetch_count = if request.include_image {
+        multimodal_fetch_count(request.top_k, image_available)
+    } else {
+        0
+    };
+    let hits = if fetch_count > 0 {
+        let results = session
+            .store
+            .search(&namespace, Some(Modality::Image), &query, fetch_count)
+            .map_err(store_error)?;
+        search_hits(results, None, fetch_count)
+    } else {
+        Vec::new()
+    };
     let hits = fuse_multimodal_hits(
         &session.tag_store,
         &session.annotation_store,
@@ -832,6 +851,7 @@ pub fn search_text(
         &query,
         hits,
         request.top_k,
+        request.include_image,
         request.include_tags,
         request.include_annotations,
     )
@@ -918,6 +938,7 @@ pub fn search_image(
         &query,
         hits,
         result_count,
+        true,
         false,
         false,
     )
@@ -1399,7 +1420,7 @@ fn merge_tag_hits(
     top_k: usize,
 ) -> Result<Vec<EmbeddingSearchHit>, text_vector_store::StoreError> {
     fuse_multimodal_hits(
-        store, store, namespace, query, image_hits, top_k, true, false,
+        store, store, namespace, query, image_hits, top_k, true, true, false,
     )
 }
 
@@ -1408,27 +1429,21 @@ fn fuse_multimodal_hits(
     annotation_store: &TextVectorStore,
     namespace: &str,
     query: &[f32],
-    mut image_hits: Vec<EmbeddingSearchHit>,
+    image_hits: Vec<EmbeddingSearchHit>,
     top_k: usize,
+    include_image: bool,
     include_tags: bool,
     include_annotations: bool,
 ) -> Result<Vec<EmbeddingSearchHit>, text_vector_store::StoreError> {
-    if image_hits.is_empty() {
-        return Ok(image_hits);
+    let weights = modality_weights(include_image, include_annotations, include_tags);
+    let mut hits = HashMap::<String, EmbeddingSearchHit>::new();
+    let mut scores = HashMap::<String, (f64, f64, f64)>::new();
+    if include_image {
+        for hit in image_hits {
+            scores.insert(hit.item_id.clone(), (hit.similarity.max(0.0), 0.0, 0.0));
+            hits.insert(hit.item_id.clone(), hit);
+        }
     }
-    let candidates = image_hits
-        .iter()
-        .map(|hit| hit.item_id.as_str())
-        .collect::<HashSet<_>>();
-    let mut scores: HashMap<String, (f64, f64, f64, bool, bool)> = image_hits
-        .iter()
-        .map(|hit| {
-            (
-                hit.item_id.clone(),
-                (hit.similarity.max(0.0), 0.0, 0.0, false, false),
-            )
-        })
-        .collect::<HashMap<_, _>>();
     for (store, kind, enabled) in [
         (annotation_store, "annotation", include_annotations),
         (tag_store, "tag", include_tags),
@@ -1442,47 +1457,48 @@ fn fuse_multimodal_hits(
         }
         for result in store.search(namespace, kind, query, count.min(4096))? {
             for item_id in store.linked_item_ids(result.document_row_id)? {
-                if candidates.contains(item_id.as_str()) {
-                    if let Some(score) = scores.get_mut(&item_id) {
-                        let similarity = result.similarity.max(0.0);
-                        if kind == "annotation" {
-                            score.1 = score.1.max(similarity);
-                            score.3 = true;
-                        } else {
-                            score.2 = score.2.max(similarity);
-                            score.4 = true;
-                        }
-                    }
+                let score = scores.entry(item_id.clone()).or_default();
+                let similarity = result.similarity.max(0.0);
+                if kind == "annotation" {
+                    score.1 = score.1.max(similarity);
+                } else {
+                    score.2 = score.2.max(similarity);
                 }
+                hits.entry(item_id.clone())
+                    .or_insert_with(|| EmbeddingSearchHit {
+                        item_id,
+                        name: String::new(),
+                        source_uri: String::new(),
+                        similarity: 0.0,
+                    });
             }
         }
     }
-    for hit in &mut image_hits {
-        let (image, annotation, tag, has_annotation, has_tag) =
-            scores.get(&hit.item_id).copied().unwrap_or_default();
-        let weights = match (
-            include_tags && has_tag,
-            include_annotations && has_annotation,
-        ) {
-            (false, false) => (1.0, 0.0, 0.0),
-            (true, false) => (0.8, 0.0, 0.2),
-            (false, true) => (0.6, 0.4, 0.0),
-            (true, true) => (0.5, 0.1, 0.4),
-        };
+    let mut merged = hits.into_values().collect::<Vec<_>>();
+    for hit in &mut merged {
+        let (image, annotation, tag) = scores.get(&hit.item_id).copied().unwrap_or_default();
         hit.similarity = image * weights.0 + annotation * weights.1 + tag * weights.2;
     }
-    let max_score = image_hits
-        .iter()
-        .map(|hit| hit.similarity)
-        .fold(0.0_f64, f64::max);
-    if max_score > 0.0 {
-        for hit in &mut image_hits {
-            hit.similarity /= max_score;
-        }
+    merged.sort_by(|left, right| right.similarity.total_cmp(&left.similarity));
+    merged.truncate(top_k);
+    Ok(merged)
+}
+
+fn modality_weights(
+    include_image: bool,
+    include_annotations: bool,
+    include_tags: bool,
+) -> (f64, f64, f64) {
+    match (include_image, include_annotations, include_tags) {
+        (true, false, false) => (1.0, 0.0, 0.0),
+        (true, false, true) => (0.8, 0.0, 0.2),
+        (true, true, false) => (0.6, 0.4, 0.0),
+        (true, true, true) => (0.5, 0.4, 0.1),
+        (false, true, true) => (0.0, 0.7, 0.3),
+        (false, true, false) => (0.0, 1.0, 0.0),
+        (false, false, true) => (0.0, 0.0, 1.0),
+        (false, false, false) => (0.0, 0.0, 0.0),
     }
-    image_hits.sort_by(|left, right| right.similarity.total_cmp(&left.similarity));
-    image_hits.truncate(top_k);
-    Ok(image_hits)
 }
 
 fn search_hits(
@@ -1623,6 +1639,7 @@ mod tests {
                 session_id: "missing".to_string(),
                 text: "query".to_string(),
                 top_k: 0,
+                include_image: true,
                 include_tags: false,
                 include_annotations: false,
             },
@@ -1917,6 +1934,7 @@ mod tests {
                 session_id: "remote".to_string(),
                 text: "query".to_string(),
                 top_k: 1,
+                include_image: true,
                 include_tags: false,
                 include_annotations: false,
             },
@@ -1932,6 +1950,7 @@ mod tests {
                 session_id: "remote".to_string(),
                 text: "query".to_string(),
                 top_k: 1,
+                include_image: true,
                 include_tags: false,
                 include_annotations: false,
             },
@@ -2007,6 +2026,78 @@ mod tests {
 
         assert_eq!(merged[0].item_id, "image-with-tag");
         assert_eq!(merged.len(), 2);
+    }
+
+    #[test]
+    fn multimodal_weights_match_each_supported_combination() {
+        assert_eq!(modality_weights(true, false, false), (1.0, 0.0, 0.0));
+        assert_eq!(modality_weights(true, false, true), (0.8, 0.0, 0.2));
+        assert_eq!(modality_weights(true, true, false), (0.6, 0.4, 0.0));
+        assert_eq!(modality_weights(true, true, true), (0.5, 0.4, 0.1));
+        assert_eq!(modality_weights(false, true, true), (0.0, 0.7, 0.3));
+        assert_eq!(modality_weights(false, true, false), (0.0, 1.0, 0.0));
+        assert_eq!(modality_weights(false, false, true), (0.0, 0.0, 1.0));
+    }
+
+    #[test]
+    fn text_fusion_returns_annotation_and_tag_candidates_without_images() {
+        let mut tags = TextVectorStore::open_in_memory("tag-model", 2).unwrap();
+        let mut annotations = TextVectorStore::open_in_memory("annotation-model", 2).unwrap();
+        tags.upsert(&TextVectorRecord {
+            document: TextDocumentRecord {
+                namespace: "library".to_string(),
+                kind: "tag".to_string(),
+                document_id: "beach".to_string(),
+                content: "beach".to_string(),
+                updated_at: 0,
+            },
+            embedding: vec![0.6, 0.8],
+        })
+        .unwrap();
+        tags.replace_item_links("library", "tag", "tag-item", &["beach".to_string()])
+            .unwrap();
+        annotations
+            .upsert(&TextVectorRecord {
+                document: TextDocumentRecord {
+                    namespace: "library".to_string(),
+                    kind: "annotation".to_string(),
+                    document_id: "annotation-item".to_string(),
+                    content: "sunny beach".to_string(),
+                    updated_at: 0,
+                },
+                embedding: vec![1.0, 0.0],
+            })
+            .unwrap();
+        annotations
+            .replace_item_links(
+                "library",
+                "annotation",
+                "annotation-item",
+                &["annotation-item".to_string()],
+            )
+            .unwrap();
+
+        let hits = fuse_multimodal_hits(
+            &tags,
+            &annotations,
+            "library",
+            &[1.0, 0.0],
+            Vec::new(),
+            2,
+            false,
+            true,
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(
+            hits.iter()
+                .map(|hit| hit.item_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["annotation-item", "tag-item"]
+        );
+        assert!((hits[0].similarity - 0.7).abs() < 1e-6);
+        assert!((hits[1].similarity - 0.18).abs() < 1e-6);
     }
 
     fn test_path(suffix: &str) -> PathBuf {

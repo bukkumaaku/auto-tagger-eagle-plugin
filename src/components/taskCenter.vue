@@ -11,7 +11,7 @@
         NTabs,
         NTag,
     } from "naive-ui";
-    import { EyeOutline, ListOutline, TrashOutline } from "@vicons/ionicons5";
+    import { CloseOutline, EyeOutline, ListOutline, PauseOutline, PlayOutline, TrashOutline } from "@vicons/ionicons5";
     import { computed, ref } from "vue";
     import {
         activeTask,
@@ -19,6 +19,9 @@
         clearFailures,
         clearFinishedTasks,
         failureRecords,
+        pauseTask,
+        requestTaskCancel,
+        resumeTask,
         taskHistory,
         type TaskRecord,
     } from "../services/taskCenter";
@@ -33,6 +36,8 @@
             ? "error"
             : task.status === "completed"
               ? "success"
+              : task.status === "cancelled"
+                ? "default"
               : task.status === "paused"
                 ? "warning"
                 : "info";
@@ -42,6 +47,7 @@
             paused: "已暂停",
             completed: "已完成",
             failed: "失败",
+            cancelled: "已取消",
         })[task.status];
     const kindText = (kind: TaskRecord["kind"]) =>
         ({
@@ -119,6 +125,11 @@
                     </div>
                     <div v-if="task.total > 0" class="task-count">
                         {{ task.completed }}/{{ task.total }}
+                    </div>
+                    <div v-if="task.status === 'running' || task.status === 'paused'" class="task-actions">
+                        <n-button v-if="task.status === 'running'" size="small" secondary @click="pauseTask(task.id)"><template #icon><n-icon><PauseOutline /></n-icon></template>暂停</n-button>
+                        <n-button v-else size="small" secondary type="warning" @click="resumeTask(task.id)"><template #icon><n-icon><PlayOutline /></n-icon></template>继续</n-button>
+                        <n-button size="small" secondary type="error" @click="requestTaskCancel(task.id)"><template #icon><n-icon><CloseOutline /></n-icon></template>取消</n-button>
                     </div>
                     <div v-if="task.error" class="task-error">{{ task.error }}</div>
                         </article>
@@ -214,5 +225,6 @@
     .task-error { margin-top: 8px; color: #e88080; overflow-wrap: anywhere; }
     .failure-path { margin-top: 6px; color: #aeb4bc; font-size: 12px; overflow-wrap: anywhere; }
     .failure-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+    .task-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
     .indeterminate { margin-top: 8px; }
 </style>

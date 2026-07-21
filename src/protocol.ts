@@ -46,6 +46,7 @@ export type Config = {
     llmTemperature: number;
     llmMaxTokens: number;
     llmOverwrite: string;
+    llmAnnotationOverwrite: string;
     llmTaggerOrAnnotation: string;
     llmTaggerPrompt: string;
     llmAnnotationPrompt: string;
@@ -164,6 +165,7 @@ export type EmbeddingSearchTextRequest = {
     sessionId: string;
     text: string;
     topK: number;
+    includeImage?: boolean;
     includeTags?: boolean;
     includeAnnotations?: boolean;
 };
@@ -253,6 +255,8 @@ export type LlamafileProcessImageRequest = {
 export type LlamafileUnloadRequest = {
     sessionId: string;
 };
+export type VideoExtractFramesRequest = { videoPath: string; ffmpegPath: string; ffprobePath: string };
+export type VideoCleanupFramesRequest = { directory: string };
 export type RemoteVisionProvider = "open_ai" | "gemini";
 export type RemoteVisionProcessImageRequest = { provider: RemoteVisionProvider; endpoint: string; apiKey?: string; model: string; imagePath: string; instruction: string; temperature?: number; maxTokens?: number };
 export type RemoteVisionBatchImage = { itemId: string; imagePath: string };
@@ -286,6 +290,8 @@ export type CommandPayloadMap = {
     wd_tagger_enqueue: WdTaggerEnqueueRequest;
     wd_tagger_batch_complete: WdTaggerBatchCompleteRequest;
     wd_tagger_video: WdTaggerVideoRequest;
+    video_extract_frames: VideoExtractFramesRequest;
+    video_cleanup_frames: VideoCleanupFramesRequest;
     wd_tagger_unload: WdTaggerUnloadRequest;
     llamafile_load: LlamafileLoadRequest;
     llamafile_process_image: LlamafileProcessImageRequest;
@@ -540,6 +546,8 @@ export type LlamafileUnloadResult = {
     sessionId: string;
     removed: boolean;
 };
+export type VideoExtractFramesResult = { videoPath: string; durationSeconds: number; framePaths: string[]; directory: string };
+export type VideoCleanupFramesResult = { removed: boolean };
 export type RemoteVisionProcessImageResult = { provider: RemoteVisionProvider; model: string; imagePath: string; content: string };
 export type RemoteVisionBatchItemResult = { itemId: string; imagePath: string; content: string; error: string };
 export type RemoteVisionProcessBatchResult = { provider: RemoteVisionProvider; model: string; results: RemoteVisionBatchItemResult[] };
@@ -572,6 +580,8 @@ export type ResultDataMap = {
     wd_tagger_enqueue: WdTaggerEnqueueResult;
     wd_tagger_batch_complete: WdTaggerBatchCompleteResult;
     wd_tagger_video: WdTaggerVideoResult;
+    video_extract_frames: VideoExtractFramesResult;
+    video_cleanup_frames: VideoCleanupFramesResult;
     wd_tagger_unload: WdTaggerUnloadResult;
     llamafile_load: LlamafileLoadResult;
     llamafile_process_image: LlamafileProcessImageResult;

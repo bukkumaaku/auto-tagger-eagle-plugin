@@ -29,6 +29,7 @@
     import {
         backenAPI,
         config,
+        configRevision,
         dialog,
         notification,
         t,
@@ -44,12 +45,16 @@
     } from "../services/backendClient";
     import {
         beginTask,
+        cancelTask,
         completeTask,
         failTask,
+        isTaskCancelled,
         recordFailure,
         updateTask,
+        waitForTaskControl,
     } from "../services/taskCenter";
-import downloadModal from "./downloadModal.vue";
+    import downloadModal from "./downloadModal.vue";
+    import TaskControlButtons from "./taskControlButtons.vue";
 import FormHelp from "./formHelp.vue";
 import {
     createTaggerBackupInDirectory,
@@ -86,6 +91,7 @@ import {
         tagPrompt: string;
         annotationPrompt: string;
         overwrite: OverwriteMode;
+        annotationOverwrite: "nocover" | "cover";
     };
 
     type ModelOption = {
@@ -115,6 +121,7 @@ import {
     );
     const isReady = ref(false);
     const isProcessing = ref(false);
+    const activeTaskId = ref("");
     const processingStage = ref<ProcessingStage>("idle");
     const completedItems = ref(0);
     const totalItems = ref(0);
@@ -154,6 +161,13 @@ import {
             loadLlmProfile();
         },
     });
+    const activeOverwrite = computed({
+        get: () => promptMode.value === "tag" ? formData.value.overwrite : formData.value.annotationOverwrite,
+        set: (value: OverwriteMode) => {
+            if (promptMode.value === "tag") formData.value.overwrite = value;
+            else formData.value.annotationOverwrite = value === "nocover" ? "nocover" : "cover";
+        },
+    });
     const modelSourceOptions = computed(() => [
         { label: t.value("llm_tagger.offline"), value: "local" },
         ...llmProfiles.value.map((profile) => ({
@@ -161,6 +175,7 @@ import {
             value: `remote:${profile.id}`,
         })),
     ]);
+    const SUPPORTED_VIDEO_EXTENSIONS = new Set(["mp4", "avi", "mov", "mkv", "flv", "wmv", "webm"]);
 
     const normalizeOverwriteMode = (value: string): OverwriteMode =>
         value === "nocover" || value === "cover" || value === "merge"
@@ -229,6 +244,7 @@ import {
                 config.llmAnnotationPrompt ||
                 DEFAULT_LLM_ANNOTATION_PROMPT,
             overwrite: normalizeOverwriteMode(config.llmOverwrite),
+            annotationOverwrite: config.llmAnnotationOverwrite === "nocover" ? "nocover" : "cover",
         };
         await refreshInstalledModels(configuredModel);
         await refreshBackups();
@@ -250,6 +266,7 @@ import {
         config.llmTaggerPrompt = formData.value.tagPrompt;
         config.llmAnnotationPrompt = formData.value.annotationPrompt;
         config.llmOverwrite = formData.value.overwrite;
+        config.llmAnnotationOverwrite = formData.value.annotationOverwrite;
         config.llmTaggerOrAnnotation =
             promptMode.value === "tag" ? "tagger" : "annotation";
         await backenAPI.setConfig();
@@ -272,6 +289,7 @@ import {
             formData.value.tagPrompt,
             formData.value.annotationPrompt,
             formData.value.overwrite,
+            formData.value.annotationOverwrite,
             formData.value.llmProfileId,
             formData.value.llmProvider,
             formData.value.llmEndpoint,
@@ -300,6 +318,16 @@ import {
             totalItems.value = 0;
         }
         if (isReady.value) void refreshBackups();
+    });
+
+    watch(configRevision, () => {
+        if (!isReady.value || isProcessing.value) return;
+        const profiles = (config.llmRemoteProfiles || []).map((profile) => ({ ...profile }));
+        llmProfiles.value = profiles;
+        if (!profiles.some((profile) => profile.id === formData.value.llmProfileId)) {
+            formData.value.llmProfileId = profiles[0]?.id || "";
+        }
+        if (formData.value.llmProfileId) loadLlmProfile();
     });
 
     onMounted(initializePage);
@@ -497,9 +525,38 @@ import {
         } else {
             const annotation = normalizeModelContent(content);
             if (!annotation) throw new Error("模型没有返回可用注释");
+            if (formData.value.annotationOverwrite === "nocover" && String(item.annotation || "").trim()) return;
             item.annotation = annotation;
         }
         await item.save();
+    };
+
+    const processFrame = async (backend: BackendClient, imagePath: string, instruction: string) => {
+        if (formData.value.llmProvider === "local") {
+            return (await backend.processImageWithLlamafile({ sessionId: LLAMAFILE_SESSION_ID, imagePath, instruction, model: formData.value.model.toLowerCase(), temperature: Number(config.llmTemperature) || 0.5, maxTokens: Number(config.llmMaxTokens) || 1024, repetitionPenalty: 1.15 })).content;
+        }
+        return (await backend.processImageWithRemoteVision({ provider: formData.value.llmProvider, endpoint: formData.value.llmEndpoint, apiKey: formData.value.llmApiKey, model: formData.value.llmRemoteModel, imagePath, instruction, temperature: Number(config.llmTemperature) || 0.5, maxTokens: Number(config.llmMaxTokens) || 1024 })).content;
+    };
+
+    const processVideoItem = async (backend: BackendClient, item: any, mode: PromptMode, instruction: string, taskId: string) => {
+        if (!item.filePath) throw new Error("视频没有可读取的文件路径");
+        const ffmpeg = await eagle.extraModule.ffmpeg.getPaths();
+        const extracted = await backend.extractVideoFrames(item.filePath, ffmpeg.ffmpeg, ffmpeg.ffprobe);
+        try {
+            const frameResults: string[] = [];
+            for (const framePath of extracted.framePaths) {
+                await waitForTaskControl(taskId);
+                frameResults.push(await processFrame(backend, framePath, instruction));
+            }
+            if (mode === "tag") { await writeResult(item.id, mode, frameResults.join("\n")); return; }
+            const percentages = [1, 20, 40, 60, 80, 99];
+            const observations = frameResults.map((content, index) => `${percentages[index]}%：${normalizeModelContent(content)}`).join("\n");
+            const summaryPrompt = `以下是同一视频六个时间点的画面注释：\n${observations}\n请综合这些按时间排列的画面，解释视频讲了什么、发生了什么以及包含哪些重要内容。只输出一段完整、准确的视频注释，不要逐帧复述。`;
+            await waitForTaskControl(taskId);
+            await writeResult(item.id, mode, await processFrame(backend, extracted.framePaths[0], summaryPrompt));
+        } finally {
+            await backend.cleanupVideoFrames(extracted.directory).catch((error) => console.error("清理视频帧失败", error));
+        }
     };
 
     const processSelected = async (mode: PromptMode, targetItems?: any[], throwOnFailure = false) => {
@@ -579,6 +636,8 @@ import {
         await persistForm();
 
         const failures: string[] = [];
+        let wasCancelled = false;
+        let cancellationError: unknown;
         const taskId = beginTask(
             "llm",
             mode === "tag" ? "LLM 图片打标" : "LLM 写入注释",
@@ -589,6 +648,7 @@ import {
             return;
         }
         isProcessing.value = true;
+        activeTaskId.value = taskId;
         completedItems.value = 0;
         totalItems.value = items.length;
         processingStage.value = "starting_backend";
@@ -625,13 +685,24 @@ import {
                 console.error("LLM 图片处理失败", item, error);
             };
             const shouldSkip = (item: any) =>
-                mode === "tag" &&
-                formData.value.overwrite === "nocover" &&
-                (item.tags || []).length > 0;
+                mode === "tag"
+                    ? formData.value.overwrite === "nocover" && (item.tags || []).length > 0
+                    : formData.value.annotationOverwrite === "nocover" && String(item.annotation || "").trim().length > 0;
+            const videoItems = items.filter((item: any) => SUPPORTED_VIDEO_EXTENSIONS.has(String(item.ext || path.extname(item.filePath || "")).replace(/^\./, "").toLowerCase()));
+            const videoIds = new Set(videoItems.map((item: any) => item.id));
+            const imageItems = items.filter((item: any) => !videoIds.has(item.id));
+            for (const item of videoItems) {
+                await waitForTaskControl(taskId);
+                if (shouldSkip(item)) { finishItem(); continue; }
+                try { await processVideoItem(backend, item, mode, instruction, taskId); }
+                catch (error) { failItem(item, error); }
+                finally { finishItem(); }
+            }
 
             if (formData.value.llmProvider === "local") {
-                for (const item of items) {
+                for (const item of imageItems) {
                     try {
+                        await waitForTaskControl(taskId);
                         if (shouldSkip(item)) continue;
                         const imagePath = await resolveImagePath(backend, item);
                         const result = await backend.processImageWithLlamafile({
@@ -655,7 +726,8 @@ import {
                     formData.value.remoteConcurrency,
                 );
                 const remoteItems: Array<{ item: any; imagePath: string }> = [];
-                for (const item of items) {
+                for (const item of imageItems) {
+                    await waitForTaskControl(taskId);
                     if (shouldSkip(item)) {
                         finishItem();
                         continue;
@@ -672,6 +744,7 @@ import {
                 }
 
                 for (let offset = 0; offset < remoteItems.length; offset += concurrency) {
+                    await waitForTaskControl(taskId);
                     let pending = remoteItems.slice(offset, offset + concurrency);
                     let lastErrors = new Map<string, Error>();
                     for (let attempt = 1; attempt <= 3 && pending.length > 0; attempt++) {
@@ -789,20 +862,30 @@ import {
                 }
             }
         } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            failures.push(message);
-            recordFailure({
-                taskId,
-                kind: "llm",
-                name: "LLM 任务",
-                path: "",
-                error: message,
-            });
+            if (isTaskCancelled(error)) {
+                wasCancelled = true;
+                cancellationError = error;
+                cancelTask(taskId);
+                notification("LLM 任务已取消", "warning");
+            }
+            if (!wasCancelled) {
+                const message = error instanceof Error ? error.message : String(error);
+                failures.push(message);
+                recordFailure({
+                    taskId,
+                    kind: "llm",
+                    name: "LLM 任务",
+                    path: "",
+                    error: message,
+                });
+            }
         } finally {
             isProcessing.value = false;
-            processingStage.value =
-                failures.length > 0 ? "failed" : "complete";
-            if (failures.length > 0) {
+            activeTaskId.value = "";
+            processingStage.value = wasCancelled ? "idle" : failures.length > 0 ? "failed" : "complete";
+            if (wasCancelled) {
+                // The cancellation handler already finalized the task.
+            } else if (failures.length > 0) {
                 failTask(taskId, failures.join("\n"));
             } else {
                 completeTask(
@@ -812,6 +895,10 @@ import {
             }
         }
 
+        if (wasCancelled) {
+            if (throwOnFailure) throw cancellationError;
+            return;
+        }
         if (failures.length > 0) {
             dialog.error({
                 title: t.value("tool.failed_files_title"),
@@ -983,13 +1070,12 @@ import {
             </n-form-item>
 
             <n-form-item
-                v-if="promptMode === 'tag'"
                 :label="t('index.is_overwrite')"
                 path="overwrite"
             >
                 <FormHelp :content="t('index.is_overwrite_desc')" html />
                 <n-radio-group
-                    v-model:value="formData.overwrite"
+                    v-model:value="activeOverwrite"
                     name="llmOverwrite"
                     :disabled="isProcessing"
                 >
@@ -1000,7 +1086,7 @@ import {
                         <n-radio value="cover">
                             {{ t("index.cover") }}
                         </n-radio>
-                        <n-radio value="merge">
+                        <n-radio v-if="promptMode === 'tag'" value="merge">
                             {{ t("index.merge") }}
                         </n-radio>
                     </n-space>
@@ -1018,6 +1104,7 @@ import {
                             : t("llm_tagger.reset_annotation_prompt")
                     }}
                 </n-button>
+                <TaskControlButtons v-if="activeTaskId" :task-id="activeTaskId" />
                 <n-button
                     type="primary"
                     :disabled="isProcessing || (formData.llmProvider === 'local' ? !formData.model : (!formData.llmEndpoint || !formData.llmRemoteModel))"

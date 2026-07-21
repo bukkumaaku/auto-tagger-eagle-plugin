@@ -3,8 +3,8 @@ import { getBackendClient } from "./backendClient";
 export type TaggerBackupItem = {
     id: string;
     name: string;
-    tags: string[];
-    annotation: string;
+    tags?: string[];
+    annotation?: string;
 };
 
 export type TaggerBackup = {
@@ -62,14 +62,12 @@ export async function createTaggerBackupInDirectory(
         operation,
         source,
         category: operation === "llm-annotation" ? "annotations" : "tags",
-        items: items.map((item) => ({
-            id: String(item.id),
-            name: String(item.name || item.id || ""),
-            tags: Array.isArray(item.tags)
-                ? item.tags.map((tag: unknown) => String(tag)).filter(Boolean)
-                : [],
-            annotation: String(item.annotation || ""),
-        })),
+        items: items.map((item) => {
+            const base = { id: String(item.id), name: String(item.name || item.id || "") };
+            return operation === "llm-annotation"
+                ? { ...base, annotation: String(item.annotation || "") }
+                : { ...base, tags: Array.isArray(item.tags) ? item.tags.map((tag: unknown) => String(tag)).filter(Boolean) : [] };
+        }),
     };
     const result = await getBackendClient().writeBackup(
         directory,
@@ -128,10 +126,11 @@ export async function restoreTaggerBackup(
                 skipped++;
                 continue;
             }
-            if (backup.operation === "llm-annotation") {
-                item.annotation = saved.annotation;
+            const category = backup.category || (backup.operation === "llm-annotation" ? "annotations" : "tags");
+            if (category === "annotations") {
+                item.annotation = String(saved.annotation || "");
             } else {
-                item.tags = [...saved.tags];
+                item.tags = [...(saved.tags || [])];
             }
             await item.save();
             restored++;
