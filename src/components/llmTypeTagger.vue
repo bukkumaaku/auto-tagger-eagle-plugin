@@ -543,10 +543,46 @@ import {
         const ffmpeg = await eagle.extraModule.ffmpeg.getPaths();
         const extracted = await backend.extractVideoFrames(item.filePath, ffmpeg.ffmpeg, ffmpeg.ffprobe);
         try {
-            const frameResults: string[] = [];
-            for (const framePath of extracted.framePaths) {
-                await waitForTaskControl(taskId);
-                frameResults.push(await processFrame(backend, framePath, instruction));
+            let frameResults: string[];
+            if (formData.value.llmProvider === "local") {
+                frameResults = [];
+                for (const [index, framePath] of extracted.framePaths.entries()) {
+                    await waitForTaskControl(taskId);
+                    updateTask(taskId, { detail: `视频 ${item.name || item.id}：分析帧 ${index + 1}/${extracted.framePaths.length}` });
+                    frameResults.push(await processFrame(backend, framePath, instruction));
+                }
+            } else {
+                const concurrency = Math.min(
+                    normalizeRemoteConcurrency(formData.value.remoteConcurrency),
+                    extracted.framePaths.length,
+                );
+                const resultById = new Map<string, RemoteVisionBatchItemResult>();
+                let returned = 0;
+                const batch = await backend.processBatchWithRemoteVision({
+                    provider: formData.value.llmProvider,
+                    endpoint: formData.value.llmEndpoint,
+                    apiKey: formData.value.llmApiKey,
+                    model: formData.value.llmRemoteModel,
+                    images: extracted.framePaths.map((imagePath, index) => ({
+                        itemId: `${item.id}:frame:${index}`,
+                        imagePath,
+                    })),
+                    instruction,
+                    temperature: Number(config.llmTemperature) || 0.5,
+                    maxTokens: Number(config.llmMaxTokens) || 1024,
+                    concurrency,
+                }, (result) => {
+                    if (!resultById.has(result.itemId)) returned++;
+                    resultById.set(result.itemId, result);
+                    updateTask(taskId, { detail: `视频 ${item.name || item.id}：并发 ${concurrency}，帧 ${returned}/${extracted.framePaths.length}` });
+                });
+                batch.results.forEach((result) => resultById.set(result.itemId, result));
+                frameResults = extracted.framePaths.map((_, index) => {
+                    const result = resultById.get(`${item.id}:frame:${index}`);
+                    if (!result) throw new Error(`视频第 ${index + 1} 帧没有返回结果`);
+                    if (result.error) throw new Error(`视频第 ${index + 1} 帧：${result.error}`);
+                    return result.content;
+                });
             }
             if (mode === "tag") { await writeResult(item.id, mode, frameResults.join("\n")); return; }
             const percentages = [1, 20, 40, 60, 80, 99];
@@ -748,6 +784,7 @@ import {
                     let pending = remoteItems.slice(offset, offset + concurrency);
                     let lastErrors = new Map<string, Error>();
                     for (let attempt = 1; attempt <= 3 && pending.length > 0; attempt++) {
+                        let returned = 0;
                         let resultByItemId = new Map<string, { content: string; error: string }>();
                         const pendingByItemId = new Map(
                             pending.map((entry) => [entry.item.id, entry]),
@@ -758,9 +795,13 @@ import {
                         const queueResultWrite = (
                             result: RemoteVisionBatchItemResult,
                         ) => {
+                            if (!resultByItemId.has(result.itemId)) returned++;
                             resultByItemId.set(result.itemId, {
                                 content: result.content,
                                 error: result.error,
+                            });
+                            updateTask(taskId, {
+                                detail: `远程并发 ${Math.min(concurrency, pending.length)}：本批返回 ${returned}/${pending.length}`,
                             });
                             if (
                                 result.error ||
@@ -854,6 +895,9 @@ import {
                         }
                         pending = retryItems;
                         if (pending.length > 0) {
+                            updateTask(taskId, {
+                                detail: `远程请求失败 ${pending.length} 项，准备第 ${attempt + 1} 次尝试`,
+                            });
                             await new Promise((resolve) =>
                                 setTimeout(resolve, 500 * attempt),
                             );

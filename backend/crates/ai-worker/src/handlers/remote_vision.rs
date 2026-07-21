@@ -6,7 +6,112 @@ use protocol::{
     RemoteVisionProcessBatchResult, RemoteVisionProcessImageRequest,
     RemoteVisionProcessImageResult, RemoteVisionProvider,
 };
-use std::{sync::mpsc, thread, time::Duration};
+use std::{
+    collections::VecDeque,
+    sync::{
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicUsize, Ordering},
+        mpsc,
+    },
+    thread,
+    time::Duration,
+};
+
+enum RemoteVisionClient {
+    OpenAi(OpenAiVisionClient),
+    Gemini(GeminiVisionClient),
+}
+
+const REMOTE_VISION_CLIENT_CACHE_CAPACITY: usize = 8;
+
+struct CachedRemoteVisionClient {
+    provider: u8,
+    endpoint: String,
+    api_key: String,
+    client: Arc<RemoteVisionClient>,
+}
+
+static REMOTE_VISION_CLIENTS: OnceLock<Mutex<VecDeque<CachedRemoteVisionClient>>> = OnceLock::new();
+
+impl RemoteVisionClient {
+    fn new(provider: RemoteVisionProvider, endpoint: &str, api_key: &str) -> HandlerResult<Self> {
+        match provider {
+            RemoteVisionProvider::OpenAi => OpenAiVisionClient::new(OpenAiConfig {
+                endpoint: endpoint.to_string(),
+                api_key: api_key.to_string(),
+                timeout: Duration::from_secs(300),
+            })
+            .map(Self::OpenAi)
+            .map_err(error),
+            RemoteVisionProvider::Gemini => GeminiVisionClient::new(GeminiConfig {
+                endpoint: endpoint.to_string(),
+                api_key: api_key.to_string(),
+                timeout: Duration::from_secs(300),
+            })
+            .map(Self::Gemini)
+            .map_err(error),
+        }
+    }
+
+    fn process_image(
+        &self,
+        model: &str,
+        image_path: &str,
+        instruction: &str,
+        temperature: f32,
+        max_tokens: usize,
+    ) -> HandlerResult<String> {
+        match self {
+            Self::OpenAi(client) => client
+                .process_image(model, image_path, instruction, temperature, max_tokens)
+                .map_err(error),
+            Self::Gemini(client) => client
+                .process_image(model, image_path, instruction, temperature, max_tokens)
+                .map_err(error),
+        }
+    }
+}
+
+fn cached_client(
+    provider: RemoteVisionProvider,
+    endpoint: &str,
+    api_key: &str,
+) -> HandlerResult<Arc<RemoteVisionClient>> {
+    let provider_key = match provider {
+        RemoteVisionProvider::OpenAi => 0,
+        RemoteVisionProvider::Gemini => 1,
+    };
+    let endpoint = endpoint.trim();
+    let api_key = api_key.trim();
+    let cache = REMOTE_VISION_CLIENTS.get_or_init(|| Mutex::new(VecDeque::new()));
+    let mut clients = cache.lock().map_err(|_| {
+        HandlerError::new(
+            "REMOTE_VISION_CLIENT_CACHE_FAILED",
+            "remote vision client cache is unavailable",
+        )
+    })?;
+
+    if let Some(index) = clients.iter().position(|entry| {
+        entry.provider == provider_key && entry.endpoint == endpoint && entry.api_key == api_key
+    }) {
+        let entry = clients
+            .remove(index)
+            .expect("cached remote vision client index must exist");
+        let client = Arc::clone(&entry.client);
+        clients.push_front(entry);
+        return Ok(client);
+    }
+
+    let client = Arc::new(RemoteVisionClient::new(provider, endpoint, api_key)?);
+    clients.push_front(CachedRemoteVisionClient {
+        provider: provider_key,
+        endpoint: endpoint.to_string(),
+        api_key: api_key.to_string(),
+        client: Arc::clone(&client),
+    });
+    clients.truncate(REMOTE_VISION_CLIENT_CACHE_CAPACITY);
+    Ok(client)
+}
 
 pub fn process_image(
     request: RemoteVisionProcessImageRequest,
@@ -37,36 +142,14 @@ pub fn process_image(
     }
     let temperature = request.temperature.unwrap_or(0.5);
     let max_tokens = request.max_tokens.unwrap_or(1024);
-    let content = match request.provider {
-        RemoteVisionProvider::OpenAi => OpenAiVisionClient::new(OpenAiConfig {
-            endpoint: request.endpoint.clone(),
-            api_key: request.api_key.clone(),
-            timeout: Duration::from_secs(300),
-        })
-        .map_err(error)?
-        .process_image(
-            &request.model,
-            &request.image_path,
-            &request.instruction,
-            temperature,
-            max_tokens,
-        )
-        .map_err(error)?,
-        RemoteVisionProvider::Gemini => GeminiVisionClient::new(GeminiConfig {
-            endpoint: request.endpoint.clone(),
-            api_key: request.api_key.clone(),
-            timeout: Duration::from_secs(300),
-        })
-        .map_err(error)?
-        .process_image(
-            &request.model,
-            &request.image_path,
-            &request.instruction,
-            temperature,
-            max_tokens,
-        )
-        .map_err(error)?,
-    };
+    let client = cached_client(request.provider, &request.endpoint, &request.api_key)?;
+    let content = client.process_image(
+        &request.model,
+        &request.image_path,
+        &request.instruction,
+        temperature,
+        max_tokens,
+    )?;
     Ok(RemoteVisionProcessImageResult {
         provider: request.provider,
         model: request.model,
@@ -87,25 +170,42 @@ pub fn process_batch(
         });
     }
 
-    let temperature = request.temperature;
-    let max_tokens = request.max_tokens;
+    if request.endpoint.trim().is_empty() {
+        return Err(HandlerError::new(
+            "REMOTE_VISION_ENDPOINT_EMPTY",
+            "endpoint cannot be empty",
+        ));
+    }
+    if request.model.trim().is_empty() {
+        return Err(HandlerError::new(
+            "REMOTE_VISION_MODEL_EMPTY",
+            "model cannot be empty",
+        ));
+    }
+    if request.instruction.trim().is_empty() {
+        return Err(HandlerError::new(
+            "REMOTE_VISION_INSTRUCTION_EMPTY",
+            "instruction cannot be empty",
+        ));
+    }
+
+    let temperature = request.temperature.unwrap_or(0.5);
+    let max_tokens = request.max_tokens.unwrap_or(1024);
+    let client = cached_client(request.provider, &request.endpoint, &request.api_key)?;
     let results = parallel_map_streaming(
         &request.images,
         request.concurrency,
-        |image| match process_image(RemoteVisionProcessImageRequest {
-            provider: request.provider,
-            endpoint: request.endpoint.clone(),
-            api_key: request.api_key.clone(),
-            model: request.model.clone(),
-            image_path: image.image_path.clone(),
-            instruction: request.instruction.clone(),
+        |image| match client.process_image(
+            &request.model,
+            &image.image_path,
+            &request.instruction,
             temperature,
             max_tokens,
-        }) {
-            Ok(result) => RemoteVisionBatchItemResult {
+        ) {
+            Ok(content) => RemoteVisionBatchItemResult {
                 item_id: image.item_id.clone(),
                 image_path: image.image_path.clone(),
-                content: result.content,
+                content,
                 error: String::new(),
             },
             Err(error) => RemoteVisionBatchItemResult {
@@ -141,17 +241,23 @@ where
         return Ok(Vec::new());
     }
     let worker_count = max_concurrency.max(1).min(32).min(items.len());
-    let chunk_size = items.len().div_ceil(worker_count);
     thread::scope(|scope| {
         let (sender, receiver) = mpsc::channel();
-        let handles = items
-            .chunks(chunk_size)
-            .map(|chunk| {
+        let next_index = Arc::new(AtomicUsize::new(0));
+        let handles = (0..worker_count)
+            .map(|_| {
                 let operation = &operation;
                 let sender = sender.clone();
+                let next_index = Arc::clone(&next_index);
                 scope.spawn(move || {
-                    for item in chunk {
-                        let _ = sender.send(operation(item));
+                    loop {
+                        let index = next_index.fetch_add(1, Ordering::Relaxed);
+                        let Some(item) = items.get(index) else {
+                            break;
+                        };
+                        if sender.send(operation(item)).is_err() {
+                            break;
+                        }
                     }
                 })
             })
@@ -194,7 +300,26 @@ mod tests {
         time::Duration,
     };
 
-    use super::parallel_map_streaming;
+    use super::{cached_client, parallel_map_streaming};
+    use protocol::RemoteVisionProvider;
+
+    #[test]
+    fn cached_client_is_reused_across_requests() {
+        let first = cached_client(
+            RemoteVisionProvider::OpenAi,
+            "https://cache-test.invalid/v1/chat/completions",
+            "cache-test-key",
+        )
+        .unwrap();
+        let second = cached_client(
+            RemoteVisionProvider::OpenAi,
+            " https://cache-test.invalid/v1/chat/completions ",
+            " cache-test-key ",
+        )
+        .unwrap();
+
+        assert!(std::sync::Arc::ptr_eq(&first, &second));
+    }
 
     #[test]
     fn parallel_map_streams_results_while_operations_run_concurrently() {
@@ -223,6 +348,8 @@ mod tests {
         assert!(peak.load(Ordering::SeqCst) > 1);
         assert_eq!(results.len(), 4);
         assert_eq!(emitted.len(), 4);
-        assert!(results.iter().all(|result| [2, 4, 6, 8].contains(result)));
+        let mut sorted_results = results;
+        sorted_results.sort_unstable();
+        assert_eq!(sorted_results, [2, 4, 6, 8]);
     }
 }
