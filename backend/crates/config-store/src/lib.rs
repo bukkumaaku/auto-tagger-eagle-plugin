@@ -68,6 +68,7 @@ pub struct Config {
     pub llm_remote_profile_id: String,
     pub model_path: String,
     pub threshold: f64,
+    pub negative_prompt_weight: f64,
     pub steps: u64,
     pub filter_tags: Vec<String>,
     pub overwrite: String,
@@ -113,6 +114,7 @@ impl Default for Config {
             llm_remote_profile_id: String::new(),
             model_path: String::new(),
             threshold: 0.25,
+            negative_prompt_weight: 0.3,
             steps: 1,
             filter_tags: Vec::new(),
             overwrite: "merge".to_string(),
@@ -138,6 +140,16 @@ impl Default for Config {
             embedding_device: "auto".to_string(),
             embedding_batch_size: 8,
         }
+    }
+}
+
+impl Config {
+    fn normalize(&mut self) {
+        self.negative_prompt_weight = if self.negative_prompt_weight.is_finite() {
+            self.negative_prompt_weight.clamp(0.0, 1.0)
+        } else {
+            0.3
+        };
     }
 }
 
@@ -211,12 +223,14 @@ impl ConfigStore {
                 let mut plain = stored.clone();
                 let obsolete_fields_removed = remove_obsolete_fields(&mut plain);
                 let secrets_need_migration = self.resolve_sensitive_fields(&mut plain)?;
-                let config: Config = serde_json::from_value(plain.clone()).map_err(|source| {
-                    ConfigError::Deserialize {
-                        path: self.path.clone(),
-                        source,
-                    }
-                })?;
+                let mut config: Config =
+                    serde_json::from_value(plain.clone()).map_err(|source| {
+                        ConfigError::Deserialize {
+                            path: self.path.clone(),
+                            source,
+                        }
+                    })?;
+                config.normalize();
                 let complete = serde_json::to_value(&config)?;
 
                 if merge_missing_fields(&mut plain, &complete)
@@ -242,6 +256,8 @@ impl ConfigStore {
     }
 
     pub fn write(&self, config: &Config) -> Result<(), ConfigError> {
+        let mut config = config.clone();
+        config.normalize();
         let mut value = serde_json::to_value(config)?;
         self.protect_sensitive_fields(&mut value)?;
         self.write_value(&value)
@@ -507,6 +523,7 @@ mod tests {
 
         assert_eq!(config, Config::default());
         assert_eq!(config.threshold, 0.25);
+        assert_eq!(config.negative_prompt_weight, 0.3);
         assert_eq!(config.steps, 1);
         assert_eq!(config.language, "zh");
         assert_eq!(config.read_video, "noread");
@@ -538,10 +555,12 @@ mod tests {
 
         assert_eq!(config.model_path, "model.onnx");
         assert_eq!(config.threshold, 0.25);
+        assert_eq!(config.negative_prompt_weight, 0.3);
         let migrated: serde_json::Value =
             json5::from_str(&fs::read_to_string(store.path()).unwrap()).unwrap();
         assert_eq!(migrated["modelPath"], "model.onnx");
         assert_eq!(migrated["threshold"], 0.25);
+        assert_eq!(migrated["negativePromptWeight"], 0.3);
         assert_eq!(migrated["llmTaggerPrompt"], DEFAULT_LLM_TAG_PROMPT);
         assert_eq!(migrated["llmRemoteConcurrency"], 4);
         assert_eq!(migrated["endpoint"], "$keyring:v1:config.endpoint");
@@ -573,6 +592,22 @@ mod tests {
             fs::read_to_string(store.path()).unwrap(),
             source_before_read
         );
+        fs::remove_file(store.path()).unwrap();
+    }
+
+    #[test]
+    fn clamps_negative_prompt_weight_when_reading_and_writing() {
+        let store = test_store("negative-prompt-weight");
+        fs::write(store.path(), "{ negativePromptWeight: 1.5 }").unwrap();
+
+        assert_eq!(store.read().unwrap().negative_prompt_weight, 1.0);
+
+        let config = Config {
+            negative_prompt_weight: -0.5,
+            ..Config::default()
+        };
+        store.write(&config).unwrap();
+        assert_eq!(store.read().unwrap().negative_prompt_weight, 0.0);
         fs::remove_file(store.path()).unwrap();
     }
 

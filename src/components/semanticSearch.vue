@@ -882,23 +882,23 @@
     function filterNegativeHits(
         hits: EmbeddingSearchHit[],
         negativeHits: EmbeddingSearchHit[],
+        penaltyWeight: number,
     ): EmbeddingSearchHit[] {
         if (negativeHits.length === 0) return hits;
         const negativeScores = new Map(
             negativeHits.map((hit) => [hit.itemId, hit.similarity]),
         );
-        const peak = negativeHits[0]?.similarity || 0;
-        const cutoff = Math.max(0.55, peak * 0.8);
-        const penaltyWeight = 0.65;
+        const normalizedWeight = Number.isFinite(penaltyWeight)
+            ? Math.min(1, Math.max(0, penaltyWeight))
+            : 0.3;
         return hits
-            .filter((hit) => (negativeScores.get(hit.itemId) || 0) < cutoff)
             .map((hit) => {
                 const negativeScore = negativeScores.get(hit.itemId) || 0;
                 return {
                     ...hit,
                     similarity: Math.max(
                         0,
-                        hit.similarity - negativeScore * penaltyWeight,
+                        hit.similarity - negativeScore * normalizedWeight,
                     ),
                 };
             })
@@ -1052,7 +1052,11 @@
                         includeAnnotations.value && canIncludeAnnotations.value,
                     )
                 ).hits;
-                hits = filterNegativeHits(hits, negativeHits);
+                hits = filterNegativeHits(
+                    hits,
+                    negativeHits,
+                    Number(config.negativePromptWeight ?? 0.3),
+                );
             }
             if (generation !== searchGeneration) return;
             allSearchHits.value = [...hits].sort(

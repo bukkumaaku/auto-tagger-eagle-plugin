@@ -30,6 +30,7 @@ export type Config = {
     llmRemoteProfileId: string;
     modelPath: string;
     threshold: number;
+    negativePromptWeight: number;
     steps: number;
     filterTags: string[];
     overwrite: string;

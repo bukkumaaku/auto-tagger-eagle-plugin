@@ -180,6 +180,9 @@
         "embedding_provider_gemini": "Native Gemini REST",
         "embedding_dimension": "Gemini Output Dimension",
         "embedding_dimension_desc": "Controls Gemini vector length from 128 to 3072; 1536 is recommended. Vectors with different dimensions are incompatible and use separate indexes.",
+        "semantic_search": "Semantic Search",
+        "negative_prompt_weight": "Negative Prompt Weight",
+        "negative_prompt_weight_desc": "Controls how strongly negative prompts reduce result scores. 0 disables the penalty and 1 subtracts the full negative similarity; results are never hidden or filtered.",
         "choose": "Choose",
         "save": "Save",
         "saved": "Settings saved"

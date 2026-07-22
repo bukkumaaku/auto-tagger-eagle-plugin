@@ -180,6 +180,9 @@
         "embedding_provider_gemini": "Gemini 原生 REST",
         "embedding_dimension": "Gemini 输出维度",
         "embedding_dimension_desc": "控制 Gemini 返回的向量长度，范围 128-3072，推荐 1536。不同维度的向量不能互相比较，切换维度会使用独立索引。",
+        "semantic_search": "语义搜索",
+        "negative_prompt_weight": "负面提示词权重",
+        "negative_prompt_weight_desc": "控制负面提示词对搜索结果的降权强度。0 表示不扣分，1 表示按完整负面相似度扣分；不会隐藏或过滤结果。",
         "choose": "选择",
         "save": "保存",
         "saved": "设置已保存"

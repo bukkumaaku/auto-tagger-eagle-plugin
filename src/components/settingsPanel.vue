@@ -7,6 +7,7 @@
         NInput,
         NInputNumber,
         NSelect,
+        NSlider,
         NDivider,
     } from "naive-ui";
     import { CloudDownloadOutline } from "@vicons/ionicons5";
@@ -25,6 +26,7 @@
         embeddingModelName: string;
         embeddingProvider: "open_ai" | "gemini";
         embeddingDimension: number;
+        negativePromptWeight: number;
         embeddingRemoteProfiles: RemoteEmbeddingProfile[];
         embeddingRemoteProfileId: string;
         llmRemoteProfiles: RemoteLlmProfile[];
@@ -38,6 +40,7 @@
         embeddingModelName: "",
         embeddingProvider: "open_ai",
         embeddingDimension: 1536,
+        negativePromptWeight: 0.3,
         embeddingRemoteProfiles: [],
         embeddingRemoteProfileId: "",
         llmRemoteProfiles: [],
@@ -57,6 +60,13 @@
     let saveTimer: ReturnType<typeof setTimeout> | undefined;
     let suspendAutoSave = false;
 
+    const normalizeNegativePromptWeight = (value: unknown) => {
+        const numeric = Number(value);
+        return Number.isFinite(numeric)
+            ? Math.min(1, Math.max(0, numeric))
+            : 0.3;
+    };
+
     const syncConfigToForm = () => {
         const nextFormData = {
             ...defaultFormData,
@@ -68,6 +78,9 @@
                 ]),
             ),
         } as SettingsFormData;
+        nextFormData.negativePromptWeight = normalizeNegativePromptWeight(
+            nextFormData.negativePromptWeight,
+        );
         formData.value = cloneFormData(nextFormData);
         if (!formData.value.embeddingRemoteProfileId) formData.value.embeddingRemoteProfileId = formData.value.embeddingRemoteProfiles[0]?.id || "";
         if (formData.value.embeddingRemoteProfiles.length === 0 && formData.value.endpoint && formData.value.embeddingModelName) addRemoteProfile(false);
@@ -171,6 +184,9 @@
 
     const syncFormToConfig = async () => {
         updateActiveProfile();
+        formData.value.negativePromptWeight = normalizeNegativePromptWeight(
+            formData.value.negativePromptWeight,
+        );
         Object.entries(cloneFormData(formData.value)).forEach(([key, value]) => {
             config[key] = value;
         });
@@ -499,6 +515,32 @@
             />
         </n-form-item>
 
+        <n-divider title-placement="left">
+            {{ t("settings.semantic_search") }}
+        </n-divider>
+
+        <n-form-item
+            :label="t('settings.negative_prompt_weight')"
+            path="negativePromptWeight"
+        >
+            <FormHelp :content="t('settings.negative_prompt_weight_desc')" />
+            <div class="weight-control">
+                <n-slider
+                    v-model:value="formData.negativePromptWeight"
+                    :min="0"
+                    :max="1"
+                    :step="0.05"
+                />
+                <n-input-number
+                    v-model:value="formData.negativePromptWeight"
+                    :min="0"
+                    :max="1"
+                    :step="0.05"
+                    :precision="2"
+                />
+            </div>
+        </n-form-item>
+
         <div class="action-row">
             <n-button type="primary" @click="save">
                 {{ t("settings.save") }}
@@ -538,6 +580,14 @@
         flex: 0 0 auto;
     }
 
+    .weight-control {
+        display: grid;
+        grid-template-columns: minmax(180px, 1fr) 120px;
+        align-items: center;
+        gap: 16px;
+        width: 100%;
+    }
+
     .action-row {
         display: flex;
         gap: 10px;
@@ -557,6 +607,10 @@
         .settings-form :deep(.n-form-item-blank > .n-input),
         .settings-form :deep(.n-form-item-blank > .n-select) {
             flex-basis: calc(100% - 30px);
+        }
+
+        .weight-control {
+            grid-template-columns: 1fr;
         }
     }
 </style>
