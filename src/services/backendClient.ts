@@ -261,8 +261,9 @@ export class BackendClient {
     embeddingHealth(
         sessionId: string,
         itemIds: string[],
+        repairLegacyEndpoints = false,
     ): Promise<EmbeddingHealthResult> {
-        return this.request("embedding_health", { sessionId, itemIds });
+        return this.request("embedding_health", { sessionId, itemIds, repairLegacyEndpoints });
     }
 
     embeddingStatus(

@@ -139,8 +139,6 @@
     const annotationTotalItems = ref(0);
     const annotationProcessedItems = ref(0);
     const annotationIndexFailures = ref<string[]>([]);
-    const legacyMigrationPrompted = ref(false);
-    const isMigratingLegacyText = ref(false);
 
     const isIndexing = ref(false);
     const totalImages = ref(0);
@@ -209,25 +207,6 @@
         dimension: number,
     ) => {
         const identity = [provider, model.trim(), dimension].join("\u0000");
-        const digest = crypto
-            .createHash("sha256")
-            .update(identity, "utf8")
-            .digest("hex")
-            .slice(0, 16);
-        return `${provider}:${model}:${dimension || "auto"}:${digest}`;
-    };
-    const endpointRemoteModelKey = (
-        provider: "open_ai" | "gemini",
-        endpoint: string,
-        model: string,
-        dimension: number,
-    ) => {
-        const identity = [
-            provider,
-            endpoint.trim().replace(/\/+$/, ""),
-            model.trim(),
-            dimension,
-        ].join("\u0000");
         const digest = crypto
             .createHash("sha256")
             .update(identity, "utf8")
@@ -412,7 +391,7 @@
                     apiKey: "",
                     legacyModelKey: "",
                 })),
-                ...profiles.filter((profile) => profile.model && profile.endpoint).map((profile) => ({ name: `${profile.name || profile.model} · ${profile.model}`, modelKey: remoteModelKey(profile.provider, profile.model, profile.provider === "gemini" ? profile.dimension : 0), modelPath: "", tokenizerPath: "", dimension: profile.provider === "gemini" ? profile.dimension : 0, provider: profile.provider, remoteModel: profile.model, selectionKey: `remote:${profile.id}`, endpoint: profile.endpoint, apiKey: profile.apiKey, legacyModelKey: endpointRemoteModelKey(profile.provider, profile.endpoint, profile.model, profile.provider === "gemini" ? profile.dimension : 0) })),
+                ...profiles.filter((profile) => profile.model && profile.endpoint).map((profile) => ({ name: `${profile.name || profile.model} · ${profile.model}`, modelKey: remoteModelKey(profile.provider, profile.model, profile.provider === "gemini" ? profile.dimension : 0), modelPath: "", tokenizerPath: "", dimension: profile.provider === "gemini" ? profile.dimension : 0, provider: profile.provider, remoteModel: profile.model, selectionKey: `remote:${profile.id}`, endpoint: profile.endpoint, apiKey: profile.apiKey, legacyModelKey: "" })),
             ];
             if (
                 !models.value.some(
@@ -449,14 +428,12 @@
                 void fetchSemanticIndexStatus(target, true)
                     .then((result) => {
                         applyIndexStatus(result);
-                        void maybePromptLegacyTextMigration(result, target);
                     })
                     .catch((error) => console.warn("后台刷新语义索引状态失败", error));
                 return;
             }
             const status = await fetchSemanticIndexStatus(target);
             applyIndexStatus(status);
-            void maybePromptLegacyTextMigration(status, target);
         } catch (error) {
             indexStatus.value = `索引状态读取失败：${errorMessage(error)}`;
             console.error("读取语义索引状态失败", error);
@@ -479,75 +456,6 @@
             tagLinkCount.value = status.tagLinkCount;
             annotationDocumentCount.value = status.annotationDocumentCount;
             annotationIndexedCount.value = status.annotationIndexedCount;
-    }
-
-    async function maybePromptLegacyTextMigration(
-        status: { legacyTextModelDetected?: boolean },
-        target: {
-            databasePath: string;
-            namespace: string;
-            modelKey: string;
-            dimension: number;
-            legacyModelKey: string;
-        },
-    ) {
-        if (!status.legacyTextModelDetected || legacyMigrationPrompted.value) return;
-        legacyMigrationPrompted.value = true;
-        dialog.warning({
-            title: "发现旧版文本向量",
-            content: "检测到没有 ::tag / ::annotation 后缀的旧标签或注释向量。迁移后才能用于当前搜索，是否现在迁移？",
-            positiveText: "立即迁移",
-            negativeText: "稍后处理",
-            maskClosable: false,
-            onPositiveClick: () => {
-                // Start in the background so the confirmation closes immediately.
-                void runLegacyTextMigration(target);
-            },
-        });
-    }
-
-    async function runLegacyTextMigration(target: {
-        databasePath: string;
-        namespace: string;
-        modelKey: string;
-        dimension: number;
-        legacyModelKey: string;
-    }) {
-        if (isMigratingLegacyText.value) return;
-        const taskId = beginTask("embedding", "迁移旧版文本向量", 0, false);
-        if (!taskId) {
-            notification("另一个任务正在运行", "warning");
-            return;
-        }
-        isMigratingLegacyText.value = true;
-        updateTask(taskId, { detail: "正在统计待迁移文本向量" });
-        try {
-            await getBackendClient().migrateEmbeddingText(
-                target.databasePath,
-                target.namespace,
-                target.modelKey,
-                target.dimension,
-                target.legacyModelKey,
-                (progress) => {
-                    updateTask(taskId, {
-                        detail: progress.phase,
-                        completed: progress.completed,
-                        total: progress.total,
-                    });
-                },
-            );
-            invalidateSemanticIndexStatus();
-            const refreshed = await fetchSemanticIndexStatus(target, true);
-            applyIndexStatus(refreshed);
-            completeTask(taskId, "旧版文本向量迁移完成");
-            notification("旧版标签和注释向量迁移完成", "success");
-        } catch (error) {
-            legacyMigrationPrompted.value = false;
-            failTask(taskId, error);
-            notification(`文本向量迁移失败：${errorMessage(error)}`, "error");
-        } finally {
-            isMigratingLegacyText.value = false;
-        }
     }
 
     async function ensureSession() {
@@ -1045,6 +953,7 @@
             healthResult.value = await getBackendClient().embeddingHealth(
                 SESSION_ID,
                 itemIds,
+                true,
             );
             for (const item of healthResult.value.missingFiles) {
                 recordFailure({
@@ -1056,7 +965,14 @@
                     error: "索引对应的图片文件不存在",
                 });
             }
-            completeTask(taskId, "检查完成");
+            if (healthResult.value.removedLegacyTableCount > 0) {
+                invalidateSemanticIndexStatus();
+                const summary = `已删除 ${healthResult.value.removedLegacyTableCount} 个旧端点表、${healthResult.value.removedLegacyVectorCount} 条旧向量`;
+                completeTask(taskId, summary);
+                notification(`健康检查${summary}`, "success");
+            } else {
+                completeTask(taskId, "检查完成，未发现旧端点表");
+            }
         } catch (error) {
             failTask(taskId, error);
             notification(errorMessage(error), "error");
@@ -1542,6 +1458,7 @@
                             <div><span>待索引</span><strong>{{ healthResult.missingItemIds.length }}</strong></div>
                             <div><span>冗余</span><strong>{{ healthResult.staleItems.length }}</strong></div>
                             <div><span>文件丢失</span><strong>{{ healthResult.missingFiles.length }}</strong></div>
+                            <div><span>已清理旧表</span><strong>{{ healthResult.removedLegacyTableCount }}</strong></div>
                         </div>
                         <n-button
                             v-if="healthResult.staleItems.length"

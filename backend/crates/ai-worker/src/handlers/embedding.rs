@@ -54,7 +54,6 @@ struct EmbeddingSessionSettings {
     api_key: String,
     remote_model: String,
     remote_dimension: usize,
-    legacy_model_key: String,
 }
 
 struct EmbeddingSession {
@@ -106,7 +105,6 @@ pub fn load(
         api_key: request.api_key,
         remote_model: request.remote_model.trim().to_string(),
         remote_dimension: request.remote_dimension,
-        legacy_model_key: request.legacy_model_key.trim().to_string(),
     };
     if settings.model_key.is_empty() {
         return Err(HandlerError::new(
@@ -622,7 +620,27 @@ pub fn health(
         .filter(|item_id| !item_id.trim().is_empty())
         .collect::<HashSet<_>>();
     let handle = embedding_session(sessions, &request.session_id)?;
-    let session = handle.lock().map_err(session_error)?;
+    let mut session = handle.lock().map_err(session_error)?;
+    let mut removed_legacy_model_keys = Vec::new();
+    let mut removed_legacy_table_count = 0;
+    let mut removed_legacy_vector_count = 0;
+    if request.repair_legacy_endpoints {
+        let image_cleanup = session
+            .store
+            .delete_compatible_models()
+            .map_err(store_error)?;
+        let current_model_key = session.settings.model_key.clone();
+        let text_cleanup = session
+            .tag_store
+            .delete_compatible_models(&current_model_key)
+            .map_err(store_error)?;
+        removed_legacy_model_keys = image_cleanup.model_keys;
+        removed_legacy_model_keys.extend(text_cleanup.model_keys);
+        removed_legacy_table_count = image_cleanup.removed_tables + text_cleanup.removed_tables;
+        removed_legacy_vector_count = image_cleanup.removed_vectors + text_cleanup.removed_vectors;
+    }
+    removed_legacy_model_keys.sort();
+    removed_legacy_model_keys.dedup();
     let stored = session
         .store
         .list_items(&session.settings.namespace, Modality::Image, SOURCE_KEY)
@@ -662,6 +680,9 @@ pub fn health(
         missing_item_ids,
         stale_items,
         missing_files,
+        removed_legacy_model_keys,
+        removed_legacy_table_count,
+        removed_legacy_vector_count,
     })
 }
 
@@ -707,24 +728,12 @@ pub fn status(
             format!("session `{}` is not loaded", request.session_id),
         ));
     }
-    let mut status_model_key = request.model_key.clone();
-    let current_dimension =
-        VectorStore::stored_dimension(&request.database_path, &request.model_key)
-            .map_err(store_error)?;
-    if current_dimension.is_none() && !request.legacy_model_key.trim().is_empty() {
-        if VectorStore::stored_dimension(&request.database_path, &request.legacy_model_key)
-            .map_err(store_error)?
-            .is_some()
-        {
-            status_model_key = request.legacy_model_key.clone();
-        }
-    }
     // Status is polled while the semantic page is being opened. Keep this path
     // read-only: opening stores initializes schemas and migrating legacy models
     // can scan the whole database, which would block every other worker request.
     let image_status = VectorStore::read_status(
         &request.database_path,
-        &status_model_key,
+        &request.model_key,
         &request.namespace,
     )
     .map_err(store_error)?
@@ -732,13 +741,12 @@ pub fn status(
     let text_status = TextVectorStore::read_status(
         &request.database_path,
         &request.model_key,
-        &request.legacy_model_key,
         &request.namespace,
     )
     .map_err(store_error)?;
     Ok(EmbeddingStatusResult {
         session_id: request.session_id,
-        model_key: status_model_key,
+        model_key: request.model_key,
         indexed_count: image_status.indexed_count,
         tag_document_count: text_status.tag_document_count,
         tag_indexed_count: text_status.tag_indexed_count,
@@ -1023,21 +1031,6 @@ pub fn unload(
     })
 }
 
-fn migrate_legacy_text_indexes(
-    tag_store: &mut TextVectorStore,
-    annotation_store: &mut TextVectorStore,
-    current_model_key: &str,
-    legacy_model_key: &str,
-) -> Result<(), String> {
-    migrate_legacy_text_indexes_with_progress(
-        tag_store,
-        annotation_store,
-        current_model_key,
-        legacy_model_key,
-        |_, _, _| {},
-    )
-}
-
 fn migrate_legacy_text_indexes_with_progress(
     tag_store: &mut TextVectorStore,
     annotation_store: &mut TextVectorStore,
@@ -1129,36 +1122,20 @@ fn create_session(settings: EmbeddingSessionSettings) -> Result<EmbeddingSession
         EmbeddingProvider::Gemini => EmbeddingEngine::Gemini(GeminiEmbedding::load(&settings)?),
     };
     let dimension = engine.dimension();
-    let mut store = VectorStore::open(&settings.database_path, &settings.model_key, dimension)
+    let store = VectorStore::open(&settings.database_path, &settings.model_key, dimension)
         .map_err(|error| error.to_string())?;
-    let mut tag_store = TextVectorStore::open(
+    let tag_store = TextVectorStore::open(
         &settings.database_path,
         format!("{}::tag", settings.model_key),
         dimension,
     )
     .map_err(|error| error.to_string())?;
-    let mut annotation_store = TextVectorStore::open(
+    let annotation_store = TextVectorStore::open(
         &settings.database_path,
         format!("{}::annotation", settings.model_key),
         dimension,
     )
     .map_err(|error| error.to_string())?;
-    if !settings.legacy_model_key.is_empty() && settings.legacy_model_key != settings.model_key {
-        store
-            .merge_model(&settings.legacy_model_key)
-            .map_err(|error| error.to_string())?;
-    }
-    // Endpoint URLs can change while the provider/model stays the same. Merge
-    // every historical endpoint-specific key in that model family as well.
-    store
-        .merge_compatible_models()
-        .map_err(|error| error.to_string())?;
-    migrate_legacy_text_indexes(
-        &mut tag_store,
-        &mut annotation_store,
-        &settings.model_key,
-        &settings.legacy_model_key,
-    )?;
     Ok(EmbeddingSession {
         settings,
         engine,

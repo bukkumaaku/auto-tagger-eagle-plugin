@@ -59,6 +59,13 @@ pub struct TextVectorStoreStatus {
     pub legacy_model_detected: bool,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ModelCleanupResult {
+    pub model_keys: Vec<String>,
+    pub removed_tables: u64,
+    pub removed_vectors: u64,
+}
+
 #[derive(Debug, Error)]
 pub enum StoreError {
     #[error("model key cannot be empty")]
@@ -153,7 +160,6 @@ impl TextVectorStore {
     pub fn read_status(
         path: impl AsRef<Path>,
         model_key: &str,
-        legacy_model_key: &str,
         namespace: &str,
     ) -> Result<TextVectorStoreStatus, StoreError> {
         let path = path.as_ref();
@@ -173,44 +179,17 @@ impl TextVectorStore {
         let annotation_document_count =
             count_documents_readonly(&connection, namespace, "annotation")?;
         let tag_link_count = count_links_readonly(&connection, namespace, "tag")?;
-        let legacy_model_detected = has_unmigrated_embeddings(
+        let tag_indexed_count = count_embeddings_for_model(
             &connection,
             namespace,
             "tag",
-            legacy_model_key,
             &format!("{model_key}::tag"),
-        )? || has_unmigrated_embeddings(
-            &connection,
-            namespace,
-            "annotation",
-            legacy_model_key,
-            &format!("{model_key}::annotation"),
-        )? || has_unmigrated_embeddings(
-            &connection,
-            namespace,
-            "tag",
-            model_key,
-            &format!("{model_key}::tag"),
-        )? || has_unmigrated_embeddings(
-            &connection,
-            namespace,
-            "annotation",
-            model_key,
-            &format!("{model_key}::annotation"),
         )?;
-        let tag_indexed_count = count_embeddings_prefer_current(
-            &connection,
-            namespace,
-            "tag",
-            model_key,
-            legacy_model_key,
-        )?;
-        let annotation_indexed_count = count_embeddings_prefer_current(
+        let annotation_indexed_count = count_embeddings_for_model(
             &connection,
             namespace,
             "annotation",
-            model_key,
-            legacy_model_key,
+            &format!("{model_key}::annotation"),
         )?;
         Ok(TextVectorStoreStatus {
             tag_document_count,
@@ -218,7 +197,7 @@ impl TextVectorStore {
             tag_link_count,
             annotation_document_count,
             annotation_indexed_count,
-            legacy_model_detected,
+            legacy_model_detected: false,
         })
     }
 
@@ -345,6 +324,60 @@ impl TextVectorStore {
 
     pub fn dimension(&self) -> usize {
         self.dimension
+    }
+
+    pub fn delete_compatible_models(
+        &mut self,
+        current_model_key: &str,
+    ) -> Result<ModelCleanupResult, StoreError> {
+        let current_model_key = current_model_key.trim();
+        let Some((prefix, _)) = current_model_key.rsplit_once(':') else {
+            return Ok(ModelCleanupResult::default());
+        };
+        let family_prefix = format!("{prefix}:");
+        let current_tag_key = format!("{current_model_key}::tag");
+        let current_annotation_key = format!("{current_model_key}::annotation");
+        let models = {
+            let mut statement = self.connection.prepare(
+                "SELECT id, model_key,
+                        (SELECT COUNT(*) FROM text_model_embeddings
+                         WHERE model_id = text_vector_models.id)
+                 FROM text_vector_models
+                 WHERE dimension = ?1",
+            )?;
+            statement
+                .query_map([self.dimension], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, u64>(2)?,
+                    ))
+                })?
+                .filter_map(Result::ok)
+                .filter(|(_, key, _)| {
+                    key.starts_with(&family_prefix)
+                        && key != &current_tag_key
+                        && key != &current_annotation_key
+                })
+                .collect::<Vec<_>>()
+        };
+        if models.is_empty() {
+            return Ok(ModelCleanupResult::default());
+        }
+        let transaction = self.connection.transaction()?;
+        for (model_id, _, _) in &models {
+            transaction.execute(
+                &format!("DROP TABLE IF EXISTS {}", vector_table_name(*model_id)),
+                [],
+            )?;
+            transaction.execute("DELETE FROM text_vector_models WHERE id = ?1", [model_id])?;
+        }
+        transaction.commit()?;
+        Ok(ModelCleanupResult {
+            model_keys: models.iter().map(|(_, key, _)| key.clone()).collect(),
+            removed_tables: models.len() as u64,
+            removed_vectors: models.iter().map(|(_, _, count)| count).sum(),
+        })
     }
 
     pub fn merge_model(&mut self, source_model_key: &str) -> Result<u64, StoreError> {
@@ -949,78 +982,6 @@ fn count_embeddings_for_model(
     )?)
 }
 
-fn has_unmigrated_embeddings(
-    connection: &Connection,
-    namespace: &str,
-    kind: &str,
-    source_model_key: &str,
-    target_model_key: &str,
-) -> Result<bool, StoreError> {
-    if source_model_key.trim().is_empty() || source_model_key == target_model_key {
-        return Ok(false);
-    }
-    let Some(source_model_id) = connection
-        .query_row(
-            "SELECT id FROM text_vector_models WHERE model_key = ?1",
-            [source_model_key],
-            |row| row.get::<_, i64>(0),
-        )
-        .optional()?
-    else {
-        return Ok(false);
-    };
-    let target_model_id = connection
-        .query_row(
-            "SELECT id FROM text_vector_models WHERE model_key = ?1",
-            [target_model_key],
-            |row| row.get::<_, i64>(0),
-        )
-        .optional()?;
-    let Some(target_model_id) = target_model_id else {
-        return Ok(count_embeddings_for_model(connection, namespace, kind, source_model_key)? > 0);
-    };
-    Ok(connection.query_row(
-        "SELECT EXISTS(
-             SELECT 1
-             FROM text_model_embeddings source
-             JOIN text_documents d ON d.id = source.document_row_id
-             LEFT JOIN text_model_embeddings target
-               ON target.model_id = ?2
-              AND target.document_row_id = source.document_row_id
-              AND target.document_revision >= source.document_revision
-             WHERE source.model_id = ?1
-               AND d.namespace = ?3 AND d.kind = ?4
-               AND source.document_revision = d.revision
-               AND target.id IS NULL
-         )",
-        params![source_model_id, target_model_id, namespace, kind],
-        |row| row.get::<_, bool>(0),
-    )?)
-}
-
-fn count_embeddings_prefer_current(
-    connection: &Connection,
-    namespace: &str,
-    kind: &str,
-    model_key: &str,
-    legacy_model_key: &str,
-) -> Result<u64, StoreError> {
-    let candidates = [
-        format!("{model_key}::{kind}"),
-        format!("{legacy_model_key}::{kind}"),
-    ];
-    for (index, candidate) in candidates.iter().enumerate() {
-        if candidate.is_empty() || candidates[..index].contains(candidate) {
-            continue;
-        }
-        let count = count_embeddings_for_model(connection, namespace, kind, candidate)?;
-        if count > 0 {
-            return Ok(count);
-        }
-    }
-    Ok(0)
-}
-
 #[derive(Clone, Debug)]
 struct StoredDocument {
     row_id: i64,
@@ -1555,34 +1516,45 @@ mod tests {
     }
 
     #[test]
-    fn legacy_detection_clears_after_embeddings_are_migrated() {
-        let database = TempDatabase::new("legacy-status");
-        let mut legacy = TextVectorStore::open(database.path(), "legacy", 2).unwrap();
-        legacy
-            .upsert(&vector("legacy", "legacy", vec![1.0, 0.0]))
-            .unwrap();
-
-        let before =
-            TextVectorStore::read_status(database.path(), "current", "legacy", "library-a")
+    fn deletes_compatible_endpoint_models_but_keeps_current_text_models() {
+        let database = TempDatabase::new("endpoint-cleanup");
+        let current_key = "gemini:embedding-model:3072:current";
+        let legacy_key = "gemini:embedding-model:3072:legacy";
+        {
+            let mut legacy =
+                TextVectorStore::open(database.path(), format!("{legacy_key}::tag"), 2).unwrap();
+            legacy
+                .upsert(&vector("legacy", "legacy", vec![1.0, 0.0]))
                 .unwrap();
-        assert!(before.legacy_model_detected);
-
-        let mut current = TextVectorStore::open(database.path(), "current::tag", 2).unwrap();
-        assert_eq!(current.pending_merge_count("legacy", "tag").unwrap(), 1);
-        let mut progress = Vec::new();
-        assert_eq!(
-            current
-                .merge_model_kind_with_progress("legacy", "tag", |completed, total| {
-                    progress.push((completed, total));
-                })
-                .unwrap(),
-            1
-        );
-        assert_eq!(progress, [(1, 1)]);
-        let after = TextVectorStore::read_status(database.path(), "current", "legacy", "library-a")
+            let mut unsuffixed = TextVectorStore::open(database.path(), current_key, 2).unwrap();
+            unsuffixed
+                .upsert(&vector("unsuffixed", "unsuffixed", vec![1.0, 0.0]))
+                .unwrap();
+        }
+        let mut current =
+            TextVectorStore::open(database.path(), format!("{current_key}::tag"), 2).unwrap();
+        current
+            .upsert(&vector("current", "current", vec![0.0, 1.0]))
             .unwrap();
-        assert!(!after.legacy_model_detected);
-        assert_eq!(after.tag_indexed_count, 1);
+        let _annotation =
+            TextVectorStore::open(database.path(), format!("{current_key}::annotation"), 2)
+                .unwrap();
+
+        let result = current.delete_compatible_models(current_key).unwrap();
+        assert_eq!(result.removed_tables, 2);
+        assert_eq!(result.removed_vectors, 2);
+        assert!(result.model_keys.contains(&format!("{legacy_key}::tag")));
+        assert!(result.model_keys.contains(&current_key.to_string()));
+        assert_eq!(current.count_embeddings("library-a", "tag").unwrap(), 1);
+        assert_eq!(
+            TextVectorStore::stored_dimension(database.path(), &format!("{legacy_key}::tag"))
+                .unwrap(),
+            None
+        );
+        let status =
+            TextVectorStore::read_status(database.path(), current_key, "library-a").unwrap();
+        assert_eq!(status.tag_indexed_count, 1);
+        assert!(!status.legacy_model_detected);
     }
 
     #[test]

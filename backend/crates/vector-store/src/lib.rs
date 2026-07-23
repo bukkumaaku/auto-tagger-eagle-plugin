@@ -2,9 +2,7 @@
 
 use std::{collections::HashSet, path::Path, sync::Once};
 
-use rusqlite::{
-    Connection, OptionalExtension, Transaction, ffi::sqlite3_auto_extension, params, types::Value,
-};
+use rusqlite::{Connection, OptionalExtension, Transaction, ffi::sqlite3_auto_extension, params};
 use sqlite_vec::sqlite3_vec_init;
 use thiserror::Error;
 
@@ -78,6 +76,13 @@ pub struct StoredEmbedding {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct VectorStoreStatus {
     pub indexed_count: u64,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ModelCleanupResult {
+    pub model_keys: Vec<String>,
+    pub removed_tables: u64,
+    pub removed_vectors: u64,
 }
 
 #[derive(Debug, Error)]
@@ -167,40 +172,10 @@ impl VectorStore {
         else {
             return Ok(None);
         };
-        let mut model_ids = vec![model_id];
-        if let Some((prefix, _)) = model_key.rsplit_once(':') {
-            let family_prefix = format!("{prefix}:");
-            let mut statement = connection.prepare(
-                "SELECT id, model_key FROM vector_models
-                 WHERE dimension = (SELECT dimension FROM vector_models WHERE id = ?1)
-                   AND id <> ?1",
-            )?;
-            for row in statement.query_map([model_id], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-            })? {
-                let (id, key) = row?;
-                if key.starts_with(&family_prefix) {
-                    model_ids.push(id);
-                }
-            }
-        }
-        let placeholders = (0..model_ids.len())
-            .map(|_| "?")
-            .collect::<Vec<_>>()
-            .join(",");
-        let mut query_params = model_ids
-            .iter()
-            .copied()
-            .map(Value::Integer)
-            .collect::<Vec<_>>();
-        query_params.push(Value::Text(namespace.to_string()));
         let indexed_count = connection.query_row(
-            &format!(
-                "SELECT COUNT(*) FROM (SELECT DISTINCT namespace, item_id, modality, source_key
-                 FROM model_vector_items WHERE model_id IN ({placeholders})
-                   AND namespace = ? AND modality = 'image')"
-            ),
-            rusqlite::params_from_iter(query_params),
+            "SELECT COUNT(*) FROM model_vector_items
+             WHERE model_id = ?1 AND namespace = ?2 AND modality = 'image'",
+            params![model_id, namespace],
             |row| row.get(0),
         )?;
         Ok(Some(VectorStoreStatus { indexed_count }))
@@ -343,29 +318,47 @@ impl VectorStore {
         Ok(imported)
     }
 
-    pub fn merge_compatible_models(&mut self) -> Result<u64, StoreError> {
+    pub fn delete_compatible_models(&mut self) -> Result<ModelCleanupResult, StoreError> {
         let Some((prefix, _)) = self.model_key.rsplit_once(':') else {
-            return Ok(0);
+            return Ok(ModelCleanupResult::default());
         };
         let family_prefix = format!("{prefix}:");
-        let keys = {
+        let models = {
             let mut statement = self.connection.prepare(
-                "SELECT model_key FROM vector_models
+                "SELECT id, model_key,
+                        (SELECT COUNT(*) FROM model_vector_items WHERE model_id = vector_models.id)
+                 FROM vector_models
                  WHERE dimension = ?1 AND model_key <> ?2",
             )?;
             statement
                 .query_map(params![self.dimension, self.model_key], |row| {
-                    row.get::<_, String>(0)
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, u64>(2)?,
+                    ))
                 })?
                 .filter_map(Result::ok)
-                .filter(|key| key.starts_with(&family_prefix))
+                .filter(|(_, key, _)| key.starts_with(&family_prefix))
                 .collect::<Vec<_>>()
         };
-        let mut imported = 0;
-        for key in keys {
-            imported += self.merge_model(&key)?;
+        if models.is_empty() {
+            return Ok(ModelCleanupResult::default());
         }
-        Ok(imported)
+        let transaction = self.connection.transaction()?;
+        for (model_id, _, _) in &models {
+            transaction.execute(
+                &format!("DROP TABLE IF EXISTS {}", vector_table_name(*model_id)),
+                [],
+            )?;
+            transaction.execute("DELETE FROM vector_models WHERE id = ?1", [model_id])?;
+        }
+        transaction.commit()?;
+        Ok(ModelCleanupResult {
+            model_keys: models.iter().map(|(_, key, _)| key.clone()).collect(),
+            removed_tables: models.len() as u64,
+            removed_vectors: models.iter().map(|(_, _, count)| count).sum(),
+        })
     }
 
     pub fn open(
@@ -1229,7 +1222,7 @@ mod tests {
     }
 
     #[test]
-    fn merges_vectors_from_compatible_endpoint_specific_model_keys() {
+    fn deletes_vectors_from_compatible_endpoint_specific_model_keys() {
         let path = temporary_database_path("compatible-import");
         let legacy_key = "gemini:gemini-embedding-2-preview:3072:old-endpoint";
         let current_key = "gemini:gemini-embedding-2-preview:3072:new-endpoint";
@@ -1240,14 +1233,14 @@ mod tests {
                 .unwrap();
         }
         let mut current = VectorStore::open(&path, current_key, 2).unwrap();
-        assert_eq!(current.merge_compatible_models().unwrap(), 1);
-        assert_eq!(current.count("library-a").unwrap(), 1);
+        let result = current.delete_compatible_models().unwrap();
+        assert_eq!(result.model_keys, vec![legacy_key]);
+        assert_eq!(result.removed_tables, 1);
+        assert_eq!(result.removed_vectors, 1);
+        assert_eq!(current.count("library-a").unwrap(), 0);
         assert_eq!(
-            current
-                .search("library-a", Some(Modality::Image), &[1.0, 0.0], 1)
-                .unwrap()[0]
-                .item_id,
-            "legacy-item"
+            VectorStore::stored_dimension(&path, legacy_key).unwrap(),
+            None
         );
         drop(current);
         std::fs::remove_file(path).unwrap();

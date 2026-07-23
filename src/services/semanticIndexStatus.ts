@@ -135,12 +135,7 @@ async function resolveSemanticIndexStatusTarget(): Promise<SemanticIndexStatusTa
                     selectionKey: `remote:${profile.id}`,
                     modelKey: remoteModelKey(profile.provider, profile.model, dimension),
                     dimension,
-                    legacyModelKey: endpointRemoteModelKey(
-                        profile.provider,
-                        profile.endpoint,
-                        profile.model,
-                        dimension,
-                    ),
+                    legacyModelKey: "",
                 };
             }),
     ];
@@ -158,17 +153,6 @@ async function resolveSemanticIndexStatusTarget(): Promise<SemanticIndexStatusTa
 
 function remoteModelKey(provider: "open_ai" | "gemini", model: string, dimension: number) {
     const identity = [provider, model.trim(), dimension].join("\u0000");
-    const digest = crypto.createHash("sha256").update(identity, "utf8").digest("hex").slice(0, 16);
-    return `${provider}:${model}:${dimension || "auto"}:${digest}`;
-}
-
-function endpointRemoteModelKey(
-    provider: "open_ai" | "gemini",
-    endpoint: string,
-    model: string,
-    dimension: number,
-) {
-    const identity = [provider, endpoint.trim().replace(/\/+$/, ""), model.trim(), dimension].join("\u0000");
     const digest = crypto.createHash("sha256").update(identity, "utf8").digest("hex").slice(0, 16);
     return `${provider}:${model}:${dimension || "auto"}:${digest}`;
 }

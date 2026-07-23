@@ -208,6 +208,8 @@ pub struct EmbeddingPruneAnnotationsRequest {
 pub struct EmbeddingHealthRequest {
     pub session_id: String,
     pub item_ids: Vec<String>,
+    #[serde(default)]
+    pub repair_legacy_endpoints: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -747,6 +749,9 @@ pub struct EmbeddingHealthResult {
     pub missing_item_ids: Vec<String>,
     pub stale_items: Vec<EmbeddingHealthItem>,
     pub missing_files: Vec<EmbeddingHealthItem>,
+    pub removed_legacy_model_keys: Vec<String>,
+    pub removed_legacy_table_count: u64,
+    pub removed_legacy_vector_count: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1387,6 +1392,7 @@ mod tests {
             Command::EmbeddingHealth(payload) => {
                 assert_eq!(payload.session_id, "embedding-main");
                 assert_eq!(payload.item_ids, ["one", "two"]);
+                assert!(!payload.repair_legacy_endpoints);
             }
             _ => panic!("expected embedding_health command"),
         }

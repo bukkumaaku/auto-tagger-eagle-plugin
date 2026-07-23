@@ -151,6 +151,7 @@ export type EmbeddingPruneAnnotationsRequest = { sessionId: string; itemIds: str
 export type EmbeddingHealthRequest = {
     sessionId: string;
     itemIds: string[];
+    repairLegacyEndpoints?: boolean;
 };
 
 export type EmbeddingStatusRequest = {
@@ -456,6 +457,9 @@ export type EmbeddingHealthResult = {
     missingItemIds: string[];
     staleItems: EmbeddingHealthItem[];
     missingFiles: EmbeddingHealthItem[];
+    removedLegacyModelKeys: string[];
+    removedLegacyTableCount: number;
+    removedLegacyVectorCount: number;
 };
 
 export type EmbeddingStatusResult = {
