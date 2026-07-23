@@ -23,6 +23,7 @@
     import { computed, h, ref, type Component } from "vue";
     import { backenAPI, t, dialog, config, notification } from "./api/backen";
     import { isTaskRunning } from "./services/taskCenter";
+    import { preloadSemanticIndexStatus } from "./services/semanticIndexStatus";
 
     const collapsed = ref(true);
     const currentPage = ref("wdtype");
@@ -152,11 +153,13 @@
                     if (!result.canceled && result.filePaths?.[0]) {
                         config.modelLocation = result.filePaths[0];
                         await backenAPI.setConfig();
+                        void preloadSemanticIndexStatus();
                         void checkForUpdate();
                     }
                 },
             });
         } else {
+            void preloadSemanticIndexStatus();
             void checkForUpdate();
         }
     });

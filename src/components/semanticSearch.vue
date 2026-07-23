@@ -51,6 +51,12 @@
     import { backenAPI, config, configRevision, dialog, notification, t } from "../api/backen";
     import { getBackendClient } from "../services/backendClient";
     import {
+        fetchSemanticIndexStatus,
+        getCachedSemanticIndexStatus,
+        cacheSemanticIndexStatus,
+        invalidateSemanticIndexStatus,
+    } from "../services/semanticIndexStatus";
+    import {
         beginTask,
         cancelTask,
         completeTask,
@@ -286,12 +292,11 @@
                 Math.max(128, Number(config.embeddingDimension) || 1536),
             );
             await refreshModels();
-            try {
-                await refreshLibraryCounts(true);
-            } catch (error) {
+            const statusPromise = refreshIndexStatus();
+            void refreshLibraryCounts(true).catch((error) => {
                 notification(errorMessage(error), "error");
-            }
-            await refreshIndexStatus();
+            });
+            await statusPromise;
             await persistSettings();
             isReady.value = true;
         } catch (error) {
@@ -426,32 +431,48 @@
             isIndexStatusLoading.value = false;
             return;
         }
-        const databasePath = path.join(
-            config.modelLocation,
-            "embedding",
-            INDEX_FILENAME,
-        );
         try {
             const namespace = await resolveLibraryNamespace();
-            const status = await getBackendClient().embeddingStatus(SESSION_ID, {
-                databasePath,
+            const target = {
+                databasePath: path.join(config.modelLocation, "embedding", INDEX_FILENAME),
                 namespace,
                 modelKey: model.modelKey,
                 dimension: model.dimension,
                 legacyModelKey: model.legacyModelKey,
-            });
-            indexedCount.value = status.indexedCount;
-            tagDocumentCount.value = status.tagDocumentCount;
-            tagIndexedCount.value = status.tagIndexedCount;
-            tagLinkCount.value = status.tagLinkCount;
-            annotationDocumentCount.value = status.annotationDocumentCount;
-            annotationIndexedCount.value = status.annotationIndexedCount;
+            };
+            const cached = getCachedSemanticIndexStatus(target, Number.POSITIVE_INFINITY);
+            if (cached) {
+                applyIndexStatus(cached);
+                isIndexStatusLoading.value = false;
+                void fetchSemanticIndexStatus(target, true)
+                    .then(applyIndexStatus)
+                    .catch((error) => console.warn("后台刷新语义索引状态失败", error));
+                return;
+            }
+            const status = await fetchSemanticIndexStatus(target);
+            applyIndexStatus(status);
         } catch (error) {
             indexStatus.value = `索引状态读取失败：${errorMessage(error)}`;
             console.error("读取语义索引状态失败", error);
         } finally {
             isIndexStatusLoading.value = false;
         }
+    }
+
+    function applyIndexStatus(status: {
+        indexedCount: number;
+        tagDocumentCount: number;
+        tagIndexedCount: number;
+        tagLinkCount: number;
+        annotationDocumentCount: number;
+        annotationIndexedCount: number;
+    }) {
+            indexedCount.value = status.indexedCount;
+            tagDocumentCount.value = status.tagDocumentCount;
+            tagIndexedCount.value = status.tagIndexedCount;
+            tagLinkCount.value = status.tagLinkCount;
+            annotationDocumentCount.value = status.annotationDocumentCount;
+            annotationIndexedCount.value = status.annotationIndexedCount;
     }
 
     async function ensureSession() {
@@ -513,6 +534,10 @@
             tagLinkCount.value = result.tagLinkCount;
             annotationDocumentCount.value = result.annotationDocumentCount;
             annotationIndexedCount.value = result.annotationIndexedCount;
+            cacheSemanticIndexStatus(
+                { databasePath, namespace, modelKey: model.modelKey, dimension: model.dimension, legacyModelKey: model.legacyModelKey },
+                result,
+            );
             loadedSignature.value = signature;
             loadedModelKey.value = model.selectionKey;
         }
@@ -718,6 +743,7 @@
     async function startAnnotationIndexing(targetItems?: EagleImage[], force = false) {
         if (isIndexing.value || isTagIndexing.value || isAnnotationIndexing.value || isSearching.value) return;
         const taskId = beginTask("embedding", "全局注释向量化"); if (!taskId) return; activeSemanticTaskId.value = taskId;
+        invalidateSemanticIndexStatus();
         isAnnotationIndexing.value = true; annotationIndexFailures.value = []; annotationIndexStatus.value = "正在加载模型";
         try {
             await ensureSession(); const images = targetItems || await getLibraryImages(); applyLibraryCounts(images);
@@ -748,6 +774,7 @@
         }
         const taskId = beginTask("embedding", "全局图片向量化");
         if (!taskId) return;
+        invalidateSemanticIndexStatus();
         activeSemanticTaskId.value = taskId;
         try {
             updateTask(taskId, { detail: "正在加载模型" });
@@ -834,6 +861,7 @@
         }
         const taskId = beginTask("embedding", "全局标签向量化");
         if (!taskId) return;
+        invalidateSemanticIndexStatus();
         activeSemanticTaskId.value = taskId;
         isTagIndexing.value = true;
         tagIndexFailures.value = [];
