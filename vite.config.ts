@@ -2,9 +2,13 @@ import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 import electronrender from "vite-plugin-electron-renderer";
 import { viteStaticCopy } from "vite-plugin-static-copy";
+import { realpathSync } from "node:fs";
+
+const projectRoot = realpathSync(process.cwd());
 
 // https://vite.dev/config/
 export default defineConfig(({ command }) => ({
+    root: projectRoot,
     plugins: [
         vue(),
         electronrender(),
