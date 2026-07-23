@@ -11,6 +11,7 @@
         NRadioButton,
         NRadioGroup,
         NSelect,
+        NSlider,
         NSpace,
         NSpin,
         NTabPane,
@@ -151,6 +152,7 @@
     const includeAnnotations = ref(false);
     const queryText = ref("");
     const negativeQueryText = ref("");
+    const negativePromptWeight = ref(0.3);
     const isSearching = ref(false);
     const allSearchHits = ref<EmbeddingSearchHit[]>([]);
     const searchResults = ref<SearchDisplayItem[]>([]);
@@ -166,6 +168,7 @@
     let masonryGridWidth = 0;
     let searchGeneration = 0;
     let previewClickTimer: ReturnType<typeof setTimeout> | undefined;
+    let settingsSaveTimer: ReturnType<typeof setTimeout> | undefined;
 
     const modelOptions = computed(() =>
         models.value.map((model) => ({
@@ -252,18 +255,6 @@
     );
     const canIncludeAnnotations = computed(() => annotationIndexedCount.value > 0);
     const canIncludeImages = computed(() => indexedCount.value > 0);
-    const searchWeightLabel = computed(() => {
-        const key = `${Number(includeImages.value)}${Number(includeAnnotations.value)}${Number(includeTags.value)}`;
-        return {
-            "100": "图片 1.0",
-            "101": "图片 0.8 / 标签 0.2",
-            "110": "图片 0.6 / 注释 0.4",
-            "111": "图片 0.5 / 注释 0.4 / 标签 0.1",
-            "011": "注释 0.7 / 标签 0.3",
-            "010": "仅注释 1.0",
-            "001": "仅标签 1.0",
-        }[key] || "请选择至少一种向量";
-    });
     const annotationPendingCount = computed(() => Math.max(libraryAnnotationCount.value - annotationIndexedCount.value, 0));
     const annotationIndexPercentage = computed(() => annotationTotalItems.value === 0 ? 0 : Number(((annotationProcessedItems.value / annotationTotalItems.value) * 100).toFixed(2)));
     const tagIndexPercentage = computed(() =>
@@ -277,6 +268,9 @@
     onMounted(async () => {
         try {
             await backenAPI.getConfig();
+            negativePromptWeight.value = normalizeNegativePromptWeight(
+                config.negativePromptWeight,
+            );
             batchSize.value = Math.min(
                 MAX_GEMINI_CONCURRENCY,
                 Math.max(1, Number(config.embeddingBatchSize) || 8),
@@ -308,13 +302,16 @@
         disposed = true;
         searchGeneration += 1;
         if (previewClickTimer) clearTimeout(previewClickTimer);
+        if (settingsSaveTimer) clearTimeout(settingsSaveTimer);
+        settingsSaveTimer = undefined;
+        if (isReady.value) void persistSettings();
         searchResultObserver?.disconnect();
         masonryResizeObserver?.disconnect();
         void getBackendClient().unloadEmbedding(SESSION_ID).catch(() => {});
     });
 
-    watch([selectedModel, batchSize], () => {
-        if (isReady.value) void persistSettings();
+    watch([selectedModel, batchSize, negativePromptWeight], () => {
+        if (isReady.value) schedulePersistSettings();
     });
     watch(selectedModel, () => {
         if (isReady.value) void refreshIndexStatus();
@@ -365,7 +362,25 @@
     async function persistSettings() {
         config.embeddingModelId = selectedModel.value;
         config.embeddingBatchSize = batchSize.value;
+        config.negativePromptWeight = normalizeNegativePromptWeight(
+            negativePromptWeight.value,
+        );
         await backenAPI.setConfig();
+    }
+
+    function schedulePersistSettings() {
+        if (settingsSaveTimer) clearTimeout(settingsSaveTimer);
+        settingsSaveTimer = setTimeout(() => {
+            settingsSaveTimer = undefined;
+            void persistSettings();
+        }, 200);
+    }
+
+    function normalizeNegativePromptWeight(value: unknown) {
+        const numeric = Number(value);
+        return Number.isFinite(numeric)
+            ? Math.min(1, Math.max(0, numeric))
+            : 0.3;
     }
 
     async function refreshModels() {
@@ -888,9 +903,7 @@
         const negativeScores = new Map(
             negativeHits.map((hit) => [hit.itemId, hit.similarity]),
         );
-        const normalizedWeight = Number.isFinite(penaltyWeight)
-            ? Math.min(1, Math.max(0, penaltyWeight))
-            : 0.3;
+        const normalizedWeight = normalizeNegativePromptWeight(penaltyWeight);
         return hits
             .map((hit) => {
                 const negativeScore = negativeScores.get(hit.itemId) || 0;
@@ -1055,7 +1068,7 @@
                 hits = filterNegativeHits(
                     hits,
                     negativeHits,
-                    Number(config.negativePromptWeight ?? 0.3),
+                    negativePromptWeight.value,
                 );
             }
             if (generation !== searchGeneration) return;
@@ -1588,12 +1601,24 @@
                             <n-radio-button value="text">文字</n-radio-button>
                             <n-radio-button value="image">当前图片</n-radio-button>
                         </n-radio-group>
-                        <n-space v-if="searchMode === 'text'" size="small">
-                            <n-checkbox v-model:checked="includeImages" :disabled="isSearching || isIndexing || !canIncludeImages">图片向量</n-checkbox>
-                            <n-checkbox v-model:checked="includeAnnotations" :disabled="isSearching || isIndexing || isAnnotationIndexing || !canIncludeAnnotations">注释向量</n-checkbox>
-                            <n-checkbox v-model:checked="includeTags" :disabled="isSearching || isIndexing || isTagIndexing || !canIncludeTags">{{ includeTags ? "含标签" : "不含标签" }}</n-checkbox>
-                        </n-space>
-                        <n-tag v-if="searchMode === 'text'" size="small" :bordered="false">{{ searchWeightLabel }}</n-tag>
+                        <div class="vector-controls">
+                            <template v-if="searchMode === 'text'">
+                                <n-checkbox v-model:checked="includeImages" :disabled="isSearching || isIndexing || !canIncludeImages">{{ t("semantic_search.vector_image") }}</n-checkbox>
+                                <n-checkbox v-model:checked="includeAnnotations" :disabled="isSearching || isIndexing || isAnnotationIndexing || !canIncludeAnnotations">{{ t("semantic_search.vector_annotation") }}</n-checkbox>
+                                <n-checkbox v-model:checked="includeTags" :disabled="isSearching || isIndexing || isTagIndexing || !canIncludeTags">{{ t("semantic_search.vector_tag") }}</n-checkbox>
+                            </template>
+                            <div class="negative-weight-control">
+                                <span class="field-label">{{ t("semantic_search.negative_prompt_weight") }}</span>
+                                <n-slider
+                                    v-model:value="negativePromptWeight"
+                                    :min="0"
+                                    :max="1"
+                                    :step="0.05"
+                                    :disabled="isSearching || isIndexing || isTagIndexing"
+                                />
+                                <span class="negative-weight-value">{{ negativePromptWeight.toFixed(2) }}</span>
+                            </div>
+                        </div>
                         <span v-if="!canIncludeTags" class="field-label">
                             完成标签向量化后可开启
                         </span>
@@ -1906,6 +1931,7 @@
         position: sticky;
         top: -22px;
         z-index: 4;
+        flex-wrap: wrap;
         padding: 12px 0;
         background: #101214;
         border-bottom: 1px solid #2b2f33;
@@ -1914,6 +1940,30 @@
     .search-toolbar :deep(.n-input) {
         flex: 1;
         min-width: 180px;
+    }
+
+    .vector-controls,
+    .negative-weight-control {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+    }
+
+    .vector-controls {
+        flex-wrap: wrap;
+    }
+
+    .negative-weight-control :deep(.n-slider) {
+        width: 120px;
+    }
+
+    .negative-weight-value {
+        width: 30px;
+        color: #c8cdd2;
+        font-variant-numeric: tabular-nums;
+        font-size: 12px;
+        text-align: right;
     }
 
     .selected-image-mode {
