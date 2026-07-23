@@ -262,6 +262,25 @@ impl VectorStore {
                 requested: self.dimension,
             });
         }
+        let has_pending = self.connection.query_row(
+            "SELECT EXISTS(
+                 SELECT 1
+                 FROM model_vector_items source
+                 LEFT JOIN model_vector_items target
+                   ON target.model_id = ?2
+                  AND target.namespace = source.namespace
+                  AND target.item_id = source.item_id
+                  AND target.modality = source.modality
+                  AND target.source_key = source.source_key
+                 WHERE source.model_id = ?1
+                   AND (target.id IS NULL OR source.updated_at > target.updated_at)
+             )",
+            params![source_id, self.model_id],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !has_pending {
+            return Ok(0);
+        }
         let source_table = vector_table_name(source_id);
         let rows = {
             let mut statement = self.connection.prepare(&format!(

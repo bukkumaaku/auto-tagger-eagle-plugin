@@ -404,19 +404,15 @@ impl TextVectorStore {
                 requested: self.dimension,
             });
         }
-        let source_table = vector_table_name(source_id);
         Ok(self.connection.query_row(
-            &format!(
-                "SELECT COUNT(*)
-                 FROM text_model_embeddings e
-                 JOIN text_documents d ON d.id = e.document_row_id
-                 JOIN {source_table} v ON v.rowid = e.id
-                 LEFT JOIN text_model_embeddings target
-                   ON target.model_id = ?2
-                  AND target.document_row_id = e.document_row_id
-                 WHERE e.model_id = ?1 AND d.kind = ?3
-                   AND (target.id IS NULL OR e.document_revision > target.document_revision)"
-            ),
+            "SELECT COUNT(*)
+             FROM text_model_embeddings e
+             JOIN text_documents d ON d.id = e.document_row_id
+             LEFT JOIN text_model_embeddings target
+               ON target.model_id = ?2
+              AND target.document_row_id = e.document_row_id
+             WHERE e.model_id = ?1 AND d.kind = ?3
+               AND (target.id IS NULL OR e.document_revision > target.document_revision)",
             params![source_id, self.model_id, kind],
             |row| row.get(0),
         )?)

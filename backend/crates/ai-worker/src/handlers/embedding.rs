@@ -1063,7 +1063,7 @@ fn migrate_legacy_text_indexes_with_progress(
     }
     steps.push((true, current_model_key.to_string(), "tag"));
     steps.push((false, current_model_key.to_string(), "annotation"));
-    let total = steps
+    let pending_counts = steps
         .iter()
         .map(|(is_tag, source, kind)| {
             let store = if *is_tag {
@@ -1075,12 +1075,14 @@ fn migrate_legacy_text_indexes_with_progress(
                 .pending_merge_count(source, kind)
                 .map_err(|error| error.to_string())
         })
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .sum::<u64>();
+        .collect::<Result<Vec<_>, _>>()?;
+    let total = pending_counts.iter().sum::<u64>();
     on_progress("准备迁移文本向量".to_string(), 0, total);
     let mut completed = 0;
-    for (is_tag, source, kind) in steps {
+    for ((is_tag, source, kind), pending) in steps.into_iter().zip(pending_counts) {
+        if pending == 0 {
+            continue;
+        }
         let phase = if kind == "tag" {
             "迁移标签向量"
         } else {
