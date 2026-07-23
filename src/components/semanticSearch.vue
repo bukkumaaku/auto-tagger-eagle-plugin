@@ -1607,9 +1607,7 @@
                                 <n-radio-button value="text">文字</n-radio-button>
                                 <n-radio-button value="image">当前图片</n-radio-button>
                             </n-radio-group>
-                        </div>
-                        <div v-if="searchMode === 'text'" class="positive-search-row">
-                            <div class="vector-controls-grid">
+                            <div v-if="searchMode === 'text'" class="vector-controls-grid">
                                 <div class="vector-control-block">
                                     <n-checkbox v-model:checked="includeImages" :disabled="isSearching || isIndexing || isIndexStatusLoading || !canIncludeImages">
                                         <span class="field-label">{{ t("semantic_search.vector_image") }}</span>
@@ -1629,22 +1627,22 @@
                                     <n-spin v-if="isIndexStatusLoading" :size="14" />
                                 </div>
                             </div>
-                            <FormHelp :content="t('semantic_search.query_desc')" />
-                            <n-input
-                                v-model:value="queryText"
-                                clearable
-                                placeholder="输入要搜索的画面或概念"
-                                :disabled="isSearching || isIndexing || isTagIndexing"
-                                @keyup.enter="runSearch"
-                            />
-                        </div>
-                        <div v-else class="positive-search-row">
-                            <div class="selected-image-mode">
+                            <div v-else class="selected-image-mode">
                                 <n-icon :size="20"><ImageOutline /></n-icon>
                                 <span>当前选中图片</span>
                             </div>
                         </div>
-                        <div class="negative-search-row">
+                        <div class="query-search-row">
+                            <template v-if="searchMode === 'text'">
+                                <FormHelp :content="t('semantic_search.query_desc')" />
+                                <n-input
+                                    v-model:value="queryText"
+                                    clearable
+                                    placeholder="输入要搜索的画面或概念"
+                                    :disabled="isSearching || isIndexing || isTagIndexing"
+                                    @keyup.enter="runSearch"
+                                />
+                            </template>
                             <n-input
                                 v-model:value="negativeQueryText"
                                 clearable
@@ -1960,8 +1958,7 @@
     }
 
     .search-mode-row,
-    .positive-search-row,
-    .negative-search-row {
+    .query-search-row {
         display: flex;
         align-items: center;
         gap: 12px;
@@ -2198,8 +2195,7 @@
             flex-wrap: wrap;
         }
 
-        .positive-search-row,
-        .negative-search-row,
+        .query-search-row,
         .vector-controls-grid {
             flex-wrap: wrap;
         }
