@@ -1589,6 +1589,24 @@
                     </div>
                     <div class="progress-block"><div class="progress-heading"><span>{{ annotationIndexStatus }}</span><span>{{ annotationProcessedItems }}/{{ annotationTotalItems }}</span></div><n-progress type="line" :percentage="annotationIndexPercentage" :processing="isAnnotationIndexing" indicator-placement="inside" /></div>
                     <div class="index-actions">
+                        <div class="batch-field">
+                            <span class="field-label">{{ batchFieldLabel }}</span>
+                            <FormHelp
+                                :content="
+                                    t(
+                                        isRemoteModel
+                                            ? 'semantic_search.concurrency_desc'
+                                            : 'semantic_search.batch_size_desc',
+                                    )
+                                "
+                            />
+                            <n-input-number
+                                v-model:value="batchSize"
+                                :min="1"
+                                :max="batchFieldMax"
+                                :disabled="isAnnotationIndexing"
+                            />
+                        </div>
                         <span class="field-label">每张图片最多建立一条注释向量</span>
                         <n-space>
                             <n-button
