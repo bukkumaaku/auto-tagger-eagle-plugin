@@ -139,6 +139,8 @@
     const annotationTotalItems = ref(0);
     const annotationProcessedItems = ref(0);
     const annotationIndexFailures = ref<string[]>([]);
+    const legacyMigrationPrompted = ref(false);
+    const isMigratingLegacyText = ref(false);
 
     const isIndexing = ref(false);
     const totalImages = ref(0);
@@ -443,14 +445,19 @@
             const cached = getCachedSemanticIndexStatus(target, Number.POSITIVE_INFINITY);
             if (cached) {
                 applyIndexStatus(cached);
+                void maybePromptLegacyTextMigration(cached, target);
                 isIndexStatusLoading.value = false;
                 void fetchSemanticIndexStatus(target, true)
-                    .then(applyIndexStatus)
+                    .then((result) => {
+                        applyIndexStatus(result);
+                        void maybePromptLegacyTextMigration(result, target);
+                    })
                     .catch((error) => console.warn("后台刷新语义索引状态失败", error));
                 return;
             }
             const status = await fetchSemanticIndexStatus(target);
             applyIndexStatus(status);
+            void maybePromptLegacyTextMigration(status, target);
         } catch (error) {
             indexStatus.value = `索引状态读取失败：${errorMessage(error)}`;
             console.error("读取语义索引状态失败", error);
@@ -473,6 +480,49 @@
             tagLinkCount.value = status.tagLinkCount;
             annotationDocumentCount.value = status.annotationDocumentCount;
             annotationIndexedCount.value = status.annotationIndexedCount;
+    }
+
+    async function maybePromptLegacyTextMigration(
+        status: { legacyTextModelDetected?: boolean },
+        target: {
+            databasePath: string;
+            namespace: string;
+            modelKey: string;
+            dimension: number;
+            legacyModelKey: string;
+        },
+    ) {
+        if (!status.legacyTextModelDetected || legacyMigrationPrompted.value) return;
+        legacyMigrationPrompted.value = true;
+        dialog.warning({
+            title: "发现旧版文本向量",
+            content: "检测到没有 ::tag / ::annotation 后缀的旧标签或注释向量。迁移后才能用于当前搜索，是否现在迁移？",
+            positiveText: "立即迁移",
+            negativeText: "稍后处理",
+            maskClosable: false,
+            onPositiveClick: async () => {
+                if (isMigratingLegacyText.value) return;
+                isMigratingLegacyText.value = true;
+                try {
+                    await getBackendClient().migrateEmbeddingText(
+                        target.databasePath,
+                        target.namespace,
+                        target.modelKey,
+                        target.dimension,
+                        target.legacyModelKey,
+                    );
+                    invalidateSemanticIndexStatus();
+                    const refreshed = await fetchSemanticIndexStatus(target, true);
+                    applyIndexStatus(refreshed);
+                    notification("旧版标签和注释向量迁移完成", "success");
+                } catch (error) {
+                    legacyMigrationPrompted.value = false;
+                    notification(`文本向量迁移失败：${errorMessage(error)}`, "error");
+                } finally {
+                    isMigratingLegacyText.value = false;
+                }
+            },
+        });
     }
 
     async function ensureSession() {

@@ -17,7 +17,8 @@ use protocol::{
     EmbeddingHealthRequest, EmbeddingHealthResult, EmbeddingImageFailure,
     EmbeddingIndexAnnotationsRequest, EmbeddingIndexAnnotationsResult, EmbeddingIndexBatchRequest,
     EmbeddingIndexBatchResult, EmbeddingIndexTagsRequest, EmbeddingIndexTagsResult,
-    EmbeddingLoadRequest, EmbeddingLoadResult, EmbeddingProvider, EmbeddingPruneAnnotationsRequest,
+    EmbeddingLoadRequest, EmbeddingLoadResult, EmbeddingMigrateTextRequest,
+    EmbeddingMigrateTextResult, EmbeddingProvider, EmbeddingPruneAnnotationsRequest,
     EmbeddingPruneAnnotationsResult, EmbeddingPruneRequest, EmbeddingPruneResult,
     EmbeddingPruneTagsRequest, EmbeddingPruneTagsResult, EmbeddingSearchHit,
     EmbeddingSearchImageRequest, EmbeddingSearchResult, EmbeddingSearchTextRequest,
@@ -692,6 +693,7 @@ pub fn status(
                 tag_link_count: tag_link_count(&session)?,
                 annotation_document_count: annotation_document_count(&session)?,
                 annotation_indexed_count: annotation_indexed_count(&session)?,
+                legacy_text_model_detected: false,
             });
         }
     }
@@ -709,66 +711,113 @@ pub fn status(
     let current_dimension =
         VectorStore::stored_dimension(&request.database_path, &request.model_key)
             .map_err(store_error)?;
-    let mut dimension = current_dimension.unwrap_or(request.dimension);
     if current_dimension.is_none() && !request.legacy_model_key.trim().is_empty() {
-        if let Some(legacy_dimension) =
-            VectorStore::stored_dimension(&request.database_path, &request.legacy_model_key)
-                .map_err(store_error)?
+        if VectorStore::stored_dimension(&request.database_path, &request.legacy_model_key)
+            .map_err(store_error)?
+            .is_some()
         {
             status_model_key = request.legacy_model_key.clone();
-            dimension = legacy_dimension;
+        }
+    }
+    // Status is polled while the semantic page is being opened. Keep this path
+    // read-only: opening stores initializes schemas and migrating legacy models
+    // can scan the whole database, which would block every other worker request.
+    let image_status = VectorStore::read_status(
+        &request.database_path,
+        &status_model_key,
+        &request.namespace,
+    )
+    .map_err(store_error)?
+    .unwrap_or_default();
+    let text_status = TextVectorStore::read_status(
+        &request.database_path,
+        &request.model_key,
+        &request.legacy_model_key,
+        &request.namespace,
+    )
+    .map_err(store_error)?;
+    Ok(EmbeddingStatusResult {
+        session_id: request.session_id,
+        model_key: status_model_key,
+        indexed_count: image_status.indexed_count,
+        tag_document_count: text_status.tag_document_count,
+        tag_indexed_count: text_status.tag_indexed_count,
+        tag_link_count: text_status.tag_link_count,
+        annotation_document_count: text_status.annotation_document_count,
+        annotation_indexed_count: text_status.annotation_indexed_count,
+        legacy_text_model_detected: text_status.legacy_model_detected,
+    })
+}
+
+pub fn migrate_text(
+    request: EmbeddingMigrateTextRequest,
+) -> HandlerResult<EmbeddingMigrateTextResult> {
+    if request.database_path.trim().is_empty()
+        || request.namespace.trim().is_empty()
+        || request.model_key.trim().is_empty()
+    {
+        return Err(HandlerError::new(
+            "EMBEDDING_MIGRATION_REQUEST_INVALID",
+            "database_path, namespace, and model_key are required",
+        ));
+    }
+    let mut dimension = request.dimension;
+    if dimension == 0 {
+        dimension = VectorStore::stored_dimension(&request.database_path, &request.model_key)
+            .map_err(store_error)?
+            .or_else(|| {
+                VectorStore::stored_dimension(&request.database_path, &request.legacy_model_key)
+                    .ok()
+                    .flatten()
+            })
+            .unwrap_or(0);
+    }
+    if dimension == 0 {
+        let text_candidates = [
+            format!("{}::tag", request.model_key),
+            format!("{}::tag", request.legacy_model_key),
+            request.legacy_model_key.clone(),
+            request.model_key.clone(),
+        ];
+        for candidate in text_candidates {
+            if let Some(found) =
+                TextVectorStore::stored_dimension(&request.database_path, &candidate)
+                    .map_err(store_error)?
+            {
+                dimension = found;
+                break;
+            }
         }
     }
     if dimension == 0 {
-        return Ok(EmbeddingStatusResult {
-            session_id: request.session_id,
-            model_key: status_model_key,
-            indexed_count: 0,
-            tag_document_count: 0,
-            tag_indexed_count: 0,
-            tag_link_count: 0,
-            annotation_document_count: 0,
-            annotation_indexed_count: 0,
-        });
+        return Err(HandlerError::new(
+            "EMBEDDING_MIGRATION_DIMENSION_UNKNOWN",
+            "cannot determine embedding dimension for text migration",
+        ));
     }
-    let store = VectorStore::open(&request.database_path, &status_model_key, dimension)
-        .map_err(store_error)?;
     let mut tag_store = TextVectorStore::open(
         &request.database_path,
-        format!("{}::tag", status_model_key),
+        format!("{}::tag", request.model_key),
         dimension,
     )
     .map_err(store_error)?;
     let mut annotation_store = TextVectorStore::open(
         &request.database_path,
-        format!("{}::annotation", status_model_key),
+        format!("{}::annotation", request.model_key),
         dimension,
     )
     .map_err(store_error)?;
     migrate_legacy_text_indexes(
         &mut tag_store,
         &mut annotation_store,
-        &status_model_key,
+        &request.model_key,
         &request.legacy_model_key,
     )
     .map_err(|error| HandlerError::new("EMBEDDING_MIGRATION_FAILED", error))?;
-    Ok(EmbeddingStatusResult {
-        session_id: request.session_id,
-        model_key: status_model_key,
-        indexed_count: store
-            .count_modality(&request.namespace, Modality::Image)
-            .map_err(store_error)?,
-        tag_document_count: tag_store
-            .count_documents(&request.namespace, "tag")
-            .map_err(store_error)?,
+    Ok(EmbeddingMigrateTextResult {
+        model_key: request.model_key,
         tag_indexed_count: tag_store
             .count_embeddings(&request.namespace, "tag")
-            .map_err(store_error)?,
-        tag_link_count: tag_store
-            .count_links(&request.namespace, "tag")
-            .map_err(store_error)?,
-        annotation_document_count: annotation_store
-            .count_documents(&request.namespace, "annotation")
             .map_err(store_error)?,
         annotation_indexed_count: annotation_store
             .count_embeddings(&request.namespace, "annotation")
@@ -1697,8 +1746,9 @@ mod tests {
         .unwrap();
         assert_eq!(result.indexed_count, 1);
         assert_eq!(result.tag_document_count, 1);
-        assert_eq!(result.tag_indexed_count, 1);
+        assert_eq!(result.tag_indexed_count, 0);
         assert_eq!(result.tag_link_count, 1);
+        assert!(result.legacy_text_model_detected);
         assert_eq!(result.model_key, "legacy");
         std::fs::remove_file(database_path).unwrap();
     }

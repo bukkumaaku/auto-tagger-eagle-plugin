@@ -48,6 +48,17 @@ pub struct TextSearchResult {
     pub similarity: f64,
 }
 
+/// Read-only index counts used by the semantic-search availability UI.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TextVectorStoreStatus {
+    pub tag_document_count: u64,
+    pub tag_indexed_count: u64,
+    pub tag_link_count: u64,
+    pub annotation_document_count: u64,
+    pub annotation_indexed_count: u64,
+    pub legacy_model_detected: bool,
+}
+
 #[derive(Debug, Error)]
 pub enum StoreError {
     #[error("model key cannot be empty")]
@@ -113,6 +124,89 @@ pub struct TextVectorStore {
 }
 
 impl TextVectorStore {
+    pub fn stored_dimension(
+        path: impl AsRef<Path>,
+        model_key: &str,
+    ) -> Result<Option<usize>, StoreError> {
+        let path = path.as_ref();
+        if !path.exists() || model_key.trim().is_empty() {
+            return Ok(None);
+        }
+        let connection = Connection::open(path)?;
+        let table_exists = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'text_vector_models')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?;
+        if table_exists == 0 {
+            return Ok(None);
+        }
+        Ok(connection
+            .query_row(
+                "SELECT dimension FROM text_vector_models WHERE model_key = ?1",
+                [model_key],
+                |row| row.get::<_, usize>(0),
+            )
+            .optional()?)
+    }
+
+    pub fn read_status(
+        path: impl AsRef<Path>,
+        model_key: &str,
+        legacy_model_key: &str,
+        namespace: &str,
+    ) -> Result<TextVectorStoreStatus, StoreError> {
+        let path = path.as_ref();
+        if !path.exists() {
+            return Ok(TextVectorStoreStatus::default());
+        }
+        let connection = Connection::open(path)?;
+        let table_exists = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'text_documents')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?;
+        if table_exists == 0 {
+            return Ok(TextVectorStoreStatus::default());
+        }
+        let tag_document_count = count_documents_readonly(&connection, namespace, "tag")?;
+        let annotation_document_count =
+            count_documents_readonly(&connection, namespace, "annotation")?;
+        let tag_link_count = count_links_readonly(&connection, namespace, "tag")?;
+        let legacy_model_detected =
+            has_embeddings_for_model(&connection, namespace, "tag", legacy_model_key)?
+                || has_embeddings_for_model(
+                    &connection,
+                    namespace,
+                    "annotation",
+                    legacy_model_key,
+                )?
+                || has_embeddings_for_model(&connection, namespace, "tag", model_key)?
+                || has_embeddings_for_model(&connection, namespace, "annotation", model_key)?;
+        let tag_indexed_count = count_embeddings_prefer_current(
+            &connection,
+            namespace,
+            "tag",
+            model_key,
+            legacy_model_key,
+        )?;
+        let annotation_indexed_count = count_embeddings_prefer_current(
+            &connection,
+            namespace,
+            "annotation",
+            model_key,
+            legacy_model_key,
+        )?;
+        Ok(TextVectorStoreStatus {
+            tag_document_count,
+            tag_indexed_count,
+            tag_link_count,
+            annotation_document_count,
+            annotation_indexed_count,
+            legacy_model_detected,
+        })
+    }
+
     pub fn open(
         path: impl AsRef<Path>,
         model_key: impl Into<String>,
@@ -724,6 +818,95 @@ impl TextVectorStore {
             |row| row.get(0),
         )?)
     }
+}
+
+fn count_documents_readonly(
+    connection: &Connection,
+    namespace: &str,
+    kind: &str,
+) -> Result<u64, StoreError> {
+    Ok(connection.query_row(
+        "SELECT COUNT(*) FROM text_documents WHERE namespace = ?1 AND kind = ?2",
+        params![namespace, kind],
+        |row| row.get(0),
+    )?)
+}
+
+fn count_links_readonly(
+    connection: &Connection,
+    namespace: &str,
+    kind: &str,
+) -> Result<u64, StoreError> {
+    Ok(connection.query_row(
+        "SELECT COUNT(*)
+         FROM text_document_links l
+         JOIN text_documents d ON d.id = l.document_row_id
+         WHERE d.namespace = ?1 AND d.kind = ?2",
+        params![namespace, kind],
+        |row| row.get(0),
+    )?)
+}
+
+fn count_embeddings_for_model(
+    connection: &Connection,
+    namespace: &str,
+    kind: &str,
+    model_key: &str,
+) -> Result<u64, StoreError> {
+    let Some(model_id) = connection
+        .query_row(
+            "SELECT id FROM text_vector_models WHERE model_key = ?1",
+            [model_key],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+    else {
+        return Ok(0);
+    };
+    Ok(connection.query_row(
+        "SELECT COUNT(*)
+         FROM text_model_embeddings e
+         JOIN text_documents d ON d.id = e.document_row_id
+         WHERE e.model_id = ?1 AND d.namespace = ?2 AND d.kind = ?3
+           AND e.document_revision = d.revision",
+        params![model_id, namespace, kind],
+        |row| row.get(0),
+    )?)
+}
+
+fn has_embeddings_for_model(
+    connection: &Connection,
+    namespace: &str,
+    kind: &str,
+    model_key: &str,
+) -> Result<bool, StoreError> {
+    if model_key.trim().is_empty() {
+        return Ok(false);
+    }
+    Ok(count_embeddings_for_model(connection, namespace, kind, model_key)? > 0)
+}
+
+fn count_embeddings_prefer_current(
+    connection: &Connection,
+    namespace: &str,
+    kind: &str,
+    model_key: &str,
+    legacy_model_key: &str,
+) -> Result<u64, StoreError> {
+    let candidates = [
+        format!("{model_key}::{kind}"),
+        format!("{legacy_model_key}::{kind}"),
+    ];
+    for (index, candidate) in candidates.iter().enumerate() {
+        if candidate.is_empty() || candidates[..index].contains(candidate) {
+            continue;
+        }
+        let count = count_embeddings_for_model(connection, namespace, kind, candidate)?;
+        if count > 0 {
+            return Ok(count);
+        }
+    }
+    Ok(0)
 }
 
 #[derive(Clone, Debug)]

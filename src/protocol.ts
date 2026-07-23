@@ -161,6 +161,13 @@ export type EmbeddingStatusRequest = {
     dimension?: number;
     legacyModelKey?: string;
 };
+export type EmbeddingMigrateTextRequest = {
+    databasePath: string;
+    namespace: string;
+    modelKey: string;
+    dimension?: number;
+    legacyModelKey?: string;
+};
 
 export type EmbeddingSearchTextRequest = {
     sessionId: string;
@@ -284,6 +291,7 @@ export type CommandPayloadMap = {
     embedding_prune_annotations: EmbeddingPruneAnnotationsRequest;
     embedding_health: EmbeddingHealthRequest;
     embedding_status: EmbeddingStatusRequest;
+    embedding_migrate_text: EmbeddingMigrateTextRequest;
     embedding_search_text: EmbeddingSearchTextRequest;
     embedding_search_image: EmbeddingSearchImageRequest;
     embedding_unload: EmbeddingUnloadRequest;
@@ -459,6 +467,12 @@ export type EmbeddingStatusResult = {
     tagLinkCount: number;
     annotationDocumentCount: number;
     annotationIndexedCount: number;
+    legacyTextModelDetected?: boolean;
+};
+export type EmbeddingMigrateTextResult = {
+    modelKey: string;
+    tagIndexedCount: number;
+    annotationIndexedCount: number;
 };
 
 export type EmbeddingSearchHit = {
@@ -574,6 +588,7 @@ export type ResultDataMap = {
     embedding_prune_annotations: EmbeddingPruneAnnotationsResult;
     embedding_health: EmbeddingHealthResult;
     embedding_status: EmbeddingStatusResult;
+    embedding_migrate_text: EmbeddingMigrateTextResult;
     embedding_search_text: EmbeddingSearchResult;
     embedding_search_image: EmbeddingSearchResult;
     embedding_unload: EmbeddingUnloadResult;

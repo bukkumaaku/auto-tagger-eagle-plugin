@@ -126,6 +126,9 @@ impl CommandHandler for BuiltinHandlers {
             Command::EmbeddingStatus(request) => {
                 embedding::status(request, &self.sessions).map(ResultPayload::EmbeddingStatus)
             }
+            Command::EmbeddingMigrateText(request) => {
+                embedding::migrate_text(request).map(ResultPayload::EmbeddingMigrateText)
+            }
             Command::EmbeddingSearchText(request) => {
                 embedding::search_text(request, &self.sessions)
                     .map(ResultPayload::EmbeddingSearchText)

@@ -71,6 +71,13 @@ pub struct StoredEmbedding {
     pub embedding: Vec<f32>,
 }
 
+/// Read-only counts used by the UI before an embedding session is loaded.
+/// This intentionally avoids opening/initializing a full `VectorStore`.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct VectorStoreStatus {
+    pub indexed_count: u64,
+}
+
 #[derive(Debug, Error)]
 pub enum StoreError {
     #[error("model key cannot be empty")]
@@ -126,6 +133,47 @@ pub struct VectorStore {
 }
 
 impl VectorStore {
+    pub fn read_status(
+        path: impl AsRef<Path>,
+        model_key: impl Into<String>,
+        namespace: &str,
+    ) -> Result<Option<VectorStoreStatus>, StoreError> {
+        let model_key = model_key.into().trim().to_string();
+        if model_key.is_empty() {
+            return Err(StoreError::EmptyModelKey);
+        }
+        let path = path.as_ref();
+        if !path.exists() {
+            return Ok(None);
+        }
+        let connection = Connection::open(path)?;
+        let table_exists = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'vector_models')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?;
+        if table_exists == 0 {
+            return Ok(None);
+        }
+        let Some(model_id) = connection
+            .query_row(
+                "SELECT id FROM vector_models WHERE model_key = ?1",
+                [&model_key],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+        else {
+            return Ok(None);
+        };
+        let indexed_count = connection.query_row(
+            "SELECT COUNT(*) FROM model_vector_items
+             WHERE model_id = ?1 AND namespace = ?2 AND modality = 'image'",
+            params![model_id, namespace],
+            |row| row.get(0),
+        )?;
+        Ok(Some(VectorStoreStatus { indexed_count }))
+    }
+
     pub fn stored_dimension(
         path: impl AsRef<Path>,
         model_key: impl Into<String>,

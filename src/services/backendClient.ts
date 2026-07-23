@@ -44,6 +44,7 @@ import {
     type EmbeddingModelInfo,
     type EmbeddingSearchResult,
     type EmbeddingStatusResult,
+    type EmbeddingMigrateTextResult,
     type EmbeddingUnloadResult,
     createRequest,
 } from "../protocol";
@@ -275,6 +276,22 @@ export class BackendClient {
         } = {},
     ): Promise<EmbeddingStatusResult> {
         return this.request("embedding_status", { sessionId, ...options });
+    }
+
+    migrateEmbeddingText(
+        databasePath: string,
+        namespace: string,
+        modelKey: string,
+        dimension: number,
+        legacyModelKey = "",
+    ): Promise<EmbeddingMigrateTextResult> {
+        return this.request("embedding_migrate_text", {
+            databasePath,
+            namespace,
+            modelKey,
+            dimension,
+            legacyModelKey,
+        });
     }
 
     searchEmbeddingText(

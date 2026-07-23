@@ -228,6 +228,18 @@ pub struct EmbeddingStatusRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct EmbeddingMigrateTextRequest {
+    pub database_path: String,
+    pub namespace: String,
+    pub model_key: String,
+    #[serde(default)]
+    pub dimension: usize,
+    #[serde(default)]
+    pub legacy_model_key: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EmbeddingSearchTextRequest {
     pub session_id: String,
     pub text: String,
@@ -477,6 +489,7 @@ pub enum Command {
     EmbeddingPruneAnnotations(EmbeddingPruneAnnotationsRequest),
     EmbeddingHealth(EmbeddingHealthRequest),
     EmbeddingStatus(EmbeddingStatusRequest),
+    EmbeddingMigrateText(EmbeddingMigrateTextRequest),
     EmbeddingSearchText(EmbeddingSearchTextRequest),
     EmbeddingSearchImage(EmbeddingSearchImageRequest),
     EmbeddingUnload(EmbeddingUnloadRequest),
@@ -747,6 +760,15 @@ pub struct EmbeddingStatusResult {
     pub tag_link_count: u64,
     pub annotation_document_count: u64,
     pub annotation_indexed_count: u64,
+    pub legacy_text_model_detected: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmbeddingMigrateTextResult {
+    pub model_key: String,
+    pub tag_indexed_count: u64,
+    pub annotation_indexed_count: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -969,6 +991,7 @@ pub enum ResultPayload {
     EmbeddingPruneAnnotations(EmbeddingPruneAnnotationsResult),
     EmbeddingHealth(EmbeddingHealthResult),
     EmbeddingStatus(EmbeddingStatusResult),
+    EmbeddingMigrateText(EmbeddingMigrateTextResult),
     EmbeddingSearchText(EmbeddingSearchResult),
     EmbeddingSearchImage(EmbeddingSearchResult),
     EmbeddingUnload(EmbeddingUnloadResult),

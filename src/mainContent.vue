@@ -38,6 +38,19 @@
         () => pageComponents[currentPage.value as keyof typeof pageComponents],
     );
     let updateCheckStarted = false;
+    let semanticPreloadTimer: ReturnType<typeof setTimeout> | undefined;
+
+    function scheduleSemanticIndexPreload() {
+        if (semanticPreloadTimer) clearTimeout(semanticPreloadTimer);
+        semanticPreloadTimer = setTimeout(() => {
+            semanticPreloadTimer = undefined;
+            if (backenAPI.is_processing) {
+                scheduleSemanticIndexPreload();
+                return;
+            }
+            void preloadSemanticIndexStatus();
+        }, 1500);
+    }
 
     async function openReleasePage(url: string) {
         if (eagle.shell?.openExternal) {
@@ -153,13 +166,13 @@
                     if (!result.canceled && result.filePaths?.[0]) {
                         config.modelLocation = result.filePaths[0];
                         await backenAPI.setConfig();
-                        void preloadSemanticIndexStatus();
+                        scheduleSemanticIndexPreload();
                         void checkForUpdate();
                     }
                 },
             });
         } else {
-            void preloadSemanticIndexStatus();
+            scheduleSemanticIndexPreload();
             void checkForUpdate();
         }
     });
