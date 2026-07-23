@@ -1083,6 +1083,11 @@ fn create_session(settings: EmbeddingSessionSettings) -> Result<EmbeddingSession
             .merge_model(&settings.legacy_model_key)
             .map_err(|error| error.to_string())?;
     }
+    // Endpoint URLs can change while the provider/model stays the same. Merge
+    // every historical endpoint-specific key in that model family as well.
+    store
+        .merge_compatible_models()
+        .map_err(|error| error.to_string())?;
     migrate_legacy_text_indexes(
         &mut tag_store,
         &mut annotation_store,
