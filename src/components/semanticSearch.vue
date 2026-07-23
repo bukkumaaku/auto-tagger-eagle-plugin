@@ -1601,25 +1601,34 @@
                             <n-radio-button value="text">文字</n-radio-button>
                             <n-radio-button value="image">当前图片</n-radio-button>
                         </n-radio-group>
-                        <div class="vector-controls">
-                            <template v-if="searchMode === 'text'">
-                                <n-checkbox v-model:checked="includeImages" :disabled="isSearching || isIndexing || !canIncludeImages">{{ t("semantic_search.vector_image") }}</n-checkbox>
-                                <n-checkbox v-model:checked="includeAnnotations" :disabled="isSearching || isIndexing || isAnnotationIndexing || !canIncludeAnnotations">{{ t("semantic_search.vector_annotation") }}</n-checkbox>
-                                <n-checkbox v-model:checked="includeTags" :disabled="isSearching || isIndexing || isTagIndexing || !canIncludeTags">{{ t("semantic_search.vector_tag") }}</n-checkbox>
-                            </template>
-                            <div class="negative-weight-control">
+                        <div v-if="searchMode === 'text'" class="vector-controls-grid">
+                            <div class="vector-control-block">
+                                <span class="field-label">{{ t("semantic_search.vector_image") }}</span>
+                                <n-checkbox v-model:checked="includeImages" :disabled="isSearching || isIndexing || !canIncludeImages" />
+                            </div>
+                            <div class="vector-control-block">
+                                <span class="field-label">{{ t("semantic_search.vector_annotation") }}</span>
+                                <n-checkbox v-model:checked="includeAnnotations" :disabled="isSearching || isIndexing || isAnnotationIndexing || !canIncludeAnnotations" />
+                            </div>
+                            <div class="vector-control-block">
+                                <span class="field-label">{{ t("semantic_search.vector_tag") }}</span>
+                                <n-checkbox v-model:checked="includeTags" :disabled="isSearching || isIndexing || isTagIndexing || !canIncludeTags" />
+                            </div>
+                            <div class="vector-control-block vector-control-block--weight">
                                 <span class="field-label">{{ t("semantic_search.negative_prompt_weight") }}</span>
-                                <n-slider
-                                    v-model:value="negativePromptWeight"
-                                    :min="0"
-                                    :max="1"
-                                    :step="0.05"
-                                    :disabled="isSearching || isIndexing || isTagIndexing"
-                                />
-                                <span class="negative-weight-value">{{ negativePromptWeight.toFixed(2) }}</span>
+                                <div class="negative-weight-control">
+                                    <n-slider
+                                        v-model:value="negativePromptWeight"
+                                        :min="0"
+                                        :max="1"
+                                        :step="0.05"
+                                        :disabled="isSearching || isIndexing || isTagIndexing"
+                                    />
+                                    <span class="negative-weight-value">{{ negativePromptWeight.toFixed(2) }}</span>
+                                </div>
                             </div>
                         </div>
-                        <span v-if="!canIncludeTags" class="field-label">
+                        <span v-if="!canIncludeTags" class="field-label vector-hint">
                             完成标签向量化后可开启
                         </span>
                         <FormHelp
@@ -1942,7 +1951,28 @@
         min-width: 180px;
     }
 
-    .vector-controls,
+    .vector-controls-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        width: 100%;
+        min-width: 0;
+    }
+
+    .vector-control-block {
+        display: grid;
+        gap: 8px;
+        min-width: 0;
+        padding: 10px 12px;
+        border: 1px solid #343a40;
+        border-radius: 4px;
+        background: rgba(255, 255, 255, 0.02);
+    }
+
+    .vector-control-block--weight {
+        min-width: 0;
+    }
+
     .negative-weight-control {
         display: flex;
         align-items: center;
@@ -1950,20 +1980,34 @@
         min-width: 0;
     }
 
-    .vector-controls {
-        flex-wrap: wrap;
-    }
-
     .negative-weight-control :deep(.n-slider) {
-        width: 120px;
+        flex: 1;
+        min-width: 0;
     }
 
     .negative-weight-value {
-        width: 30px;
+        width: 38px;
         color: #c8cdd2;
         font-variant-numeric: tabular-nums;
         font-size: 12px;
         text-align: right;
+    }
+
+    .vector-hint {
+        display: inline-block;
+        margin-top: 6px;
+    }
+
+    @media (max-width: 1180px) {
+        .vector-controls-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+    }
+
+    @media (max-width: 760px) {
+        .vector-controls-grid {
+            grid-template-columns: 1fr;
+        }
     }
 
     .selected-image-mode {
