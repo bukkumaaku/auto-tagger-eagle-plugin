@@ -22,8 +22,8 @@ use protocol::{
     EmbeddingPruneAnnotationsResult, EmbeddingPruneRequest, EmbeddingPruneResult,
     EmbeddingPruneTagsRequest, EmbeddingPruneTagsResult, EmbeddingSearchHit,
     EmbeddingSearchImageRequest, EmbeddingSearchResult, EmbeddingSearchTextRequest,
-    EmbeddingStatusRequest, EmbeddingStatusResult, EmbeddingTagFailure, EmbeddingUnloadRequest,
-    EmbeddingUnloadResult,
+    EmbeddingStatusRequest, EmbeddingStatusResult, EmbeddingTagFailure,
+    EmbeddingTextMigrationProgress, EmbeddingUnloadRequest, EmbeddingUnloadResult, ProgressPayload,
 };
 use serde_json::json;
 use text_vector_store::{TextDocumentRecord, TextVectorRecord, TextVectorStore};
@@ -31,7 +31,7 @@ use vector_store::{Modality, SearchResult, VectorRecord, VectorStore};
 
 use crate::sessions::{SessionError, SessionManager};
 
-use super::{HandlerError, HandlerResult};
+use super::{EventEmitter, HandlerError, HandlerResult};
 
 const SESSION_PREFIX: &str = "embedding:";
 const SOURCE_KEY: &str = "primary";
@@ -751,6 +751,7 @@ pub fn status(
 
 pub fn migrate_text(
     request: EmbeddingMigrateTextRequest,
+    events: &mut dyn EventEmitter,
 ) -> HandlerResult<EmbeddingMigrateTextResult> {
     if request.database_path.trim().is_empty()
         || request.namespace.trim().is_empty()
@@ -807,11 +808,20 @@ pub fn migrate_text(
         dimension,
     )
     .map_err(store_error)?;
-    migrate_legacy_text_indexes(
+    migrate_legacy_text_indexes_with_progress(
         &mut tag_store,
         &mut annotation_store,
         &request.model_key,
         &request.legacy_model_key,
+        |phase, completed, total| {
+            let _ = events.progress(ProgressPayload::EmbeddingTextMigration(
+                EmbeddingTextMigrationProgress {
+                    phase,
+                    completed,
+                    total,
+                },
+            ));
+        },
     )
     .map_err(|error| HandlerError::new("EMBEDDING_MIGRATION_FAILED", error))?;
     Ok(EmbeddingMigrateTextResult {
@@ -1019,31 +1029,84 @@ fn migrate_legacy_text_indexes(
     current_model_key: &str,
     legacy_model_key: &str,
 ) -> Result<(), String> {
+    migrate_legacy_text_indexes_with_progress(
+        tag_store,
+        annotation_store,
+        current_model_key,
+        legacy_model_key,
+        |_, _, _| {},
+    )
+}
+
+fn migrate_legacy_text_indexes_with_progress(
+    tag_store: &mut TextVectorStore,
+    annotation_store: &mut TextVectorStore,
+    current_model_key: &str,
+    legacy_model_key: &str,
+    mut on_progress: impl FnMut(String, u64, u64),
+) -> Result<(), String> {
     let current_model_key = current_model_key.trim();
     if current_model_key.is_empty() {
         return Ok(());
     }
     let legacy_model_key = legacy_model_key.trim();
+    let mut steps: Vec<(bool, String, &'static str)> = Vec::new();
     if !legacy_model_key.is_empty() && legacy_model_key != current_model_key {
-        tag_store
-            .merge_model_kind(&format!("{legacy_model_key}::tag"), "tag")
-            .map_err(|error| error.to_string())?;
-        annotation_store
-            .merge_model_kind(&format!("{legacy_model_key}::annotation"), "annotation")
-            .map_err(|error| error.to_string())?;
-        tag_store
-            .merge_model_kind(legacy_model_key, "tag")
-            .map_err(|error| error.to_string())?;
-        annotation_store
-            .merge_model_kind(legacy_model_key, "annotation")
-            .map_err(|error| error.to_string())?;
+        steps.push((true, format!("{legacy_model_key}::tag"), "tag"));
+        steps.push((
+            false,
+            format!("{legacy_model_key}::annotation"),
+            "annotation",
+        ));
+        steps.push((true, legacy_model_key.to_string(), "tag"));
+        steps.push((false, legacy_model_key.to_string(), "annotation"));
     }
-    tag_store
-        .merge_model_kind(current_model_key, "tag")
-        .map_err(|error| error.to_string())?;
-    annotation_store
-        .merge_model_kind(current_model_key, "annotation")
-        .map_err(|error| error.to_string())?;
+    steps.push((true, current_model_key.to_string(), "tag"));
+    steps.push((false, current_model_key.to_string(), "annotation"));
+    let total = steps
+        .iter()
+        .map(|(is_tag, source, kind)| {
+            let store = if *is_tag {
+                &*tag_store
+            } else {
+                &*annotation_store
+            };
+            store
+                .pending_merge_count(source, kind)
+                .map_err(|error| error.to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .sum::<u64>();
+    on_progress("准备迁移文本向量".to_string(), 0, total);
+    let mut completed = 0;
+    for (is_tag, source, kind) in steps {
+        let phase = if kind == "tag" {
+            "迁移标签向量"
+        } else {
+            "迁移注释向量"
+        };
+        let base = completed;
+        let imported = if is_tag {
+            tag_store
+                .merge_model_kind_with_progress(&source, kind, |done, step_total| {
+                    if done == step_total || done % 25 == 0 {
+                        on_progress(phase.to_string(), base + done, total);
+                    }
+                })
+                .map_err(|error| error.to_string())?
+        } else {
+            annotation_store
+                .merge_model_kind_with_progress(&source, kind, |done, step_total| {
+                    if done == step_total || done % 25 == 0 {
+                        on_progress(phase.to_string(), base + done, total);
+                    }
+                })
+                .map_err(|error| error.to_string())?
+        };
+        completed += imported;
+    }
+    on_progress("文本向量迁移完成".to_string(), completed, total);
     Ok(())
 }
 

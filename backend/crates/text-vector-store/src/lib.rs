@@ -348,7 +348,7 @@ impl TextVectorStore {
     }
 
     pub fn merge_model(&mut self, source_model_key: &str) -> Result<u64, StoreError> {
-        self.merge_model_filtered(source_model_key, None)
+        self.merge_model_filtered(source_model_key, None, &mut |_, _| {})
     }
 
     pub fn merge_model_kind(
@@ -360,13 +360,73 @@ impl TextVectorStore {
         if kind.is_empty() {
             return Ok(0);
         }
-        self.merge_model_filtered(source_model_key, Some(kind))
+        self.merge_model_filtered(source_model_key, Some(kind), &mut |_, _| {})
+    }
+
+    pub fn merge_model_kind_with_progress(
+        &mut self,
+        source_model_key: &str,
+        kind: &str,
+        mut on_progress: impl FnMut(u64, u64),
+    ) -> Result<u64, StoreError> {
+        let kind = kind.trim();
+        if kind.is_empty() {
+            return Ok(0);
+        }
+        self.merge_model_filtered(source_model_key, Some(kind), &mut on_progress)
+    }
+
+    pub fn pending_merge_count(
+        &self,
+        source_model_key: &str,
+        kind: &str,
+    ) -> Result<u64, StoreError> {
+        let source_model_key = source_model_key.trim();
+        let kind = kind.trim();
+        if source_model_key.is_empty() || source_model_key == self.model_key || kind.is_empty() {
+            return Ok(0);
+        }
+        let source = self
+            .connection
+            .query_row(
+                "SELECT id, dimension FROM text_vector_models WHERE model_key = ?1",
+                [source_model_key],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, usize>(1)?)),
+            )
+            .optional()?;
+        let Some((source_id, source_dimension)) = source else {
+            return Ok(0);
+        };
+        if source_dimension != self.dimension {
+            return Err(StoreError::DimensionMismatch {
+                model_key: source_model_key.to_string(),
+                actual: source_dimension,
+                requested: self.dimension,
+            });
+        }
+        let source_table = vector_table_name(source_id);
+        Ok(self.connection.query_row(
+            &format!(
+                "SELECT COUNT(*)
+                 FROM text_model_embeddings e
+                 JOIN text_documents d ON d.id = e.document_row_id
+                 JOIN {source_table} v ON v.rowid = e.id
+                 LEFT JOIN text_model_embeddings target
+                   ON target.model_id = ?2
+                  AND target.document_row_id = e.document_row_id
+                 WHERE e.model_id = ?1 AND d.kind = ?3
+                   AND (target.id IS NULL OR e.document_revision > target.document_revision)"
+            ),
+            params![source_id, self.model_id, kind],
+            |row| row.get(0),
+        )?)
     }
 
     fn merge_model_filtered(
         &mut self,
         source_model_key: &str,
         kind: Option<&str>,
+        on_progress: &mut dyn FnMut(u64, u64),
     ) -> Result<u64, StoreError> {
         let source_model_key = source_model_key.trim();
         if source_model_key.is_empty() || source_model_key == self.model_key {
@@ -419,7 +479,10 @@ impl TextVectorStore {
                 .collect::<Result<Vec<_>, _>>()?
         };
         let transaction = self.connection.transaction()?;
-        for (document_row_id, document_revision, namespace, kind, embedding) in &rows {
+        let total = rows.len() as u64;
+        for (index, (document_row_id, document_revision, namespace, kind, embedding)) in
+            rows.iter().enumerate()
+        {
             transaction.execute(
                 "INSERT INTO text_model_embeddings(model_id, document_row_id, document_revision)
                  VALUES (?1, ?2, ?3)
@@ -445,9 +508,10 @@ impl TextVectorStore {
                 ),
                 params![row_id, embedding, namespace, kind],
             )?;
+            on_progress(index as u64 + 1, total);
         }
         transaction.commit()?;
-        Ok(rows.len() as u64)
+        Ok(total)
     }
 
     pub fn sqlite_vec_version(&self) -> Result<String, StoreError> {
@@ -1508,7 +1572,17 @@ mod tests {
         assert!(before.legacy_model_detected);
 
         let mut current = TextVectorStore::open(database.path(), "current::tag", 2).unwrap();
-        assert_eq!(current.merge_model_kind("legacy", "tag").unwrap(), 1);
+        assert_eq!(current.pending_merge_count("legacy", "tag").unwrap(), 1);
+        let mut progress = Vec::new();
+        assert_eq!(
+            current
+                .merge_model_kind_with_progress("legacy", "tag", |completed, total| {
+                    progress.push((completed, total));
+                })
+                .unwrap(),
+            1
+        );
+        assert_eq!(progress, [(1, 1)]);
         let after = TextVectorStore::read_status(database.path(), "current", "legacy", "library-a")
             .unwrap();
         assert!(!after.legacy_model_detected);

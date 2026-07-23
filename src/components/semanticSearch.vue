@@ -445,7 +445,6 @@
             const cached = getCachedSemanticIndexStatus(target, Number.POSITIVE_INFINITY);
             if (cached) {
                 applyIndexStatus(cached);
-                void maybePromptLegacyTextMigration(cached, target);
                 isIndexStatusLoading.value = false;
                 void fetchSemanticIndexStatus(target, true)
                     .then((result) => {
@@ -500,29 +499,55 @@
             positiveText: "立即迁移",
             negativeText: "稍后处理",
             maskClosable: false,
-            onPositiveClick: async () => {
-                if (isMigratingLegacyText.value) return;
-                isMigratingLegacyText.value = true;
-                try {
-                    await getBackendClient().migrateEmbeddingText(
-                        target.databasePath,
-                        target.namespace,
-                        target.modelKey,
-                        target.dimension,
-                        target.legacyModelKey,
-                    );
-                    invalidateSemanticIndexStatus();
-                    const refreshed = await fetchSemanticIndexStatus(target, true);
-                    applyIndexStatus(refreshed);
-                    notification("旧版标签和注释向量迁移完成", "success");
-                } catch (error) {
-                    legacyMigrationPrompted.value = false;
-                    notification(`文本向量迁移失败：${errorMessage(error)}`, "error");
-                } finally {
-                    isMigratingLegacyText.value = false;
-                }
+            onPositiveClick: () => {
+                // Start in the background so the confirmation closes immediately.
+                void runLegacyTextMigration(target);
             },
         });
+    }
+
+    async function runLegacyTextMigration(target: {
+        databasePath: string;
+        namespace: string;
+        modelKey: string;
+        dimension: number;
+        legacyModelKey: string;
+    }) {
+        if (isMigratingLegacyText.value) return;
+        const taskId = beginTask("embedding", "迁移旧版文本向量", 0, false);
+        if (!taskId) {
+            notification("另一个任务正在运行", "warning");
+            return;
+        }
+        isMigratingLegacyText.value = true;
+        updateTask(taskId, { detail: "正在统计待迁移文本向量" });
+        try {
+            await getBackendClient().migrateEmbeddingText(
+                target.databasePath,
+                target.namespace,
+                target.modelKey,
+                target.dimension,
+                target.legacyModelKey,
+                (progress) => {
+                    updateTask(taskId, {
+                        detail: progress.phase,
+                        completed: progress.completed,
+                        total: progress.total,
+                    });
+                },
+            );
+            invalidateSemanticIndexStatus();
+            const refreshed = await fetchSemanticIndexStatus(target, true);
+            applyIndexStatus(refreshed);
+            completeTask(taskId, "旧版文本向量迁移完成");
+            notification("旧版标签和注释向量迁移完成", "success");
+        } catch (error) {
+            legacyMigrationPrompted.value = false;
+            failTask(taskId, error);
+            notification(`文本向量迁移失败：${errorMessage(error)}`, "error");
+        } finally {
+            isMigratingLegacyText.value = false;
+        }
     }
 
     async function ensureSession() {

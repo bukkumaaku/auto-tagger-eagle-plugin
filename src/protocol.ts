@@ -627,6 +627,11 @@ export type DownloadFileProgress = {
 export type ProgressDataMap = {
     download_file: DownloadFileProgress;
     remote_vision_batch_item: RemoteVisionBatchItemResult;
+    embedding_text_migration: {
+        phase: string;
+        completed: number;
+        total: number;
+    };
 };
 
 export type ProgressKind = keyof ProgressDataMap;

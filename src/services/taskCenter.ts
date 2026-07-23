@@ -11,6 +11,7 @@ export type TaskRecord = {
     status: TaskStatus;
     completed: number;
     total: number;
+    controllable: boolean;
     startedAt: number;
     finishedAt?: number;
     error?: string;
@@ -50,7 +51,7 @@ export const taskHistory = computed(() => state.tasks);
 export const isTaskRunning = computed(() => Boolean(activeTask.value));
 export const failureRecords = computed(() => state.failures);
 
-export function beginTask(kind: TaskKind, title: string, total = 0) {
+export function beginTask(kind: TaskKind, title: string, total = 0, controllable = true) {
     if (activeTask.value) return null;
     const task: TaskRecord = {
         id: `task-${Date.now()}-${++sequence}`,
@@ -60,6 +61,7 @@ export function beginTask(kind: TaskKind, title: string, total = 0) {
         status: "running",
         completed: 0,
         total: Math.max(0, total),
+        controllable,
         startedAt: Date.now(),
     };
     state.tasks.unshift(task);

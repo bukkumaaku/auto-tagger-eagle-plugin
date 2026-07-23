@@ -126,7 +126,7 @@
                     <div v-if="task.total > 0" class="task-count">
                         {{ task.completed }}/{{ task.total }}
                     </div>
-                    <div v-if="task.status === 'running' || task.status === 'paused'" class="task-actions">
+                    <div v-if="task.controllable && (task.status === 'running' || task.status === 'paused')" class="task-actions">
                         <n-button v-if="task.status === 'running'" size="small" secondary @click="pauseTask(task.id)"><template #icon><n-icon><PauseOutline /></n-icon></template>暂停</n-button>
                         <n-button v-else size="small" secondary type="warning" @click="resumeTask(task.id)"><template #icon><n-icon><PlayOutline /></n-icon></template>继续</n-button>
                         <n-button size="small" secondary type="error" @click="requestTaskCancel(task.id)"><template #icon><n-icon><CloseOutline /></n-icon></template>取消</n-button>

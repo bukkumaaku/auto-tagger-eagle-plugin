@@ -284,14 +284,21 @@ export class BackendClient {
         modelKey: string,
         dimension: number,
         legacyModelKey = "",
+        onProgress?: (progress: {
+            phase: string;
+            completed: number;
+            total: number;
+        }) => void,
     ): Promise<EmbeddingMigrateTextResult> {
-        return this.request("embedding_migrate_text", {
-            databasePath,
-            namespace,
-            modelKey,
-            dimension,
-            legacyModelKey,
-        });
+        return this.request(
+            "embedding_migrate_text",
+            { databasePath, namespace, modelKey, dimension, legacyModelKey },
+            (progress) => {
+                if (progress.kind === "embedding_text_migration") {
+                    onProgress?.(progress.data);
+                }
+            },
+        );
     }
 
     searchEmbeddingText(
