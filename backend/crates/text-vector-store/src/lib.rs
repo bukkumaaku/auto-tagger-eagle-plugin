@@ -173,16 +173,31 @@ impl TextVectorStore {
         let annotation_document_count =
             count_documents_readonly(&connection, namespace, "annotation")?;
         let tag_link_count = count_links_readonly(&connection, namespace, "tag")?;
-        let legacy_model_detected =
-            has_embeddings_for_model(&connection, namespace, "tag", legacy_model_key)?
-                || has_embeddings_for_model(
-                    &connection,
-                    namespace,
-                    "annotation",
-                    legacy_model_key,
-                )?
-                || has_embeddings_for_model(&connection, namespace, "tag", model_key)?
-                || has_embeddings_for_model(&connection, namespace, "annotation", model_key)?;
+        let legacy_model_detected = has_unmigrated_embeddings(
+            &connection,
+            namespace,
+            "tag",
+            legacy_model_key,
+            &format!("{model_key}::tag"),
+        )? || has_unmigrated_embeddings(
+            &connection,
+            namespace,
+            "annotation",
+            legacy_model_key,
+            &format!("{model_key}::annotation"),
+        )? || has_unmigrated_embeddings(
+            &connection,
+            namespace,
+            "tag",
+            model_key,
+            &format!("{model_key}::tag"),
+        )? || has_unmigrated_embeddings(
+            &connection,
+            namespace,
+            "annotation",
+            model_key,
+            &format!("{model_key}::annotation"),
+        )?;
         let tag_indexed_count = count_embeddings_prefer_current(
             &connection,
             namespace,
@@ -874,16 +889,53 @@ fn count_embeddings_for_model(
     )?)
 }
 
-fn has_embeddings_for_model(
+fn has_unmigrated_embeddings(
     connection: &Connection,
     namespace: &str,
     kind: &str,
-    model_key: &str,
+    source_model_key: &str,
+    target_model_key: &str,
 ) -> Result<bool, StoreError> {
-    if model_key.trim().is_empty() {
+    if source_model_key.trim().is_empty() || source_model_key == target_model_key {
         return Ok(false);
     }
-    Ok(count_embeddings_for_model(connection, namespace, kind, model_key)? > 0)
+    let Some(source_model_id) = connection
+        .query_row(
+            "SELECT id FROM text_vector_models WHERE model_key = ?1",
+            [source_model_key],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+    else {
+        return Ok(false);
+    };
+    let target_model_id = connection
+        .query_row(
+            "SELECT id FROM text_vector_models WHERE model_key = ?1",
+            [target_model_key],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?;
+    let Some(target_model_id) = target_model_id else {
+        return Ok(count_embeddings_for_model(connection, namespace, kind, source_model_key)? > 0);
+    };
+    Ok(connection.query_row(
+        "SELECT EXISTS(
+             SELECT 1
+             FROM text_model_embeddings source
+             JOIN text_documents d ON d.id = source.document_row_id
+             LEFT JOIN text_model_embeddings target
+               ON target.model_id = ?2
+              AND target.document_row_id = source.document_row_id
+              AND target.document_revision >= source.document_revision
+             WHERE source.model_id = ?1
+               AND d.namespace = ?3 AND d.kind = ?4
+               AND source.document_revision = d.revision
+               AND target.id IS NULL
+         )",
+        params![source_model_id, target_model_id, namespace, kind],
+        |row| row.get::<_, bool>(0),
+    )?)
 }
 
 fn count_embeddings_prefer_current(
@@ -1440,6 +1492,27 @@ mod tests {
             current.count_embeddings("library-a", "annotation").unwrap(),
             0
         );
+    }
+
+    #[test]
+    fn legacy_detection_clears_after_embeddings_are_migrated() {
+        let database = TempDatabase::new("legacy-status");
+        let mut legacy = TextVectorStore::open(database.path(), "legacy", 2).unwrap();
+        legacy
+            .upsert(&vector("legacy", "legacy", vec![1.0, 0.0]))
+            .unwrap();
+
+        let before =
+            TextVectorStore::read_status(database.path(), "current", "legacy", "library-a")
+                .unwrap();
+        assert!(before.legacy_model_detected);
+
+        let mut current = TextVectorStore::open(database.path(), "current::tag", 2).unwrap();
+        assert_eq!(current.merge_model_kind("legacy", "tag").unwrap(), 1);
+        let after = TextVectorStore::read_status(database.path(), "current", "legacy", "library-a")
+            .unwrap();
+        assert!(!after.legacy_model_detected);
+        assert_eq!(after.tag_indexed_count, 1);
     }
 
     #[test]
