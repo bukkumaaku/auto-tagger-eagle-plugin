@@ -115,6 +115,7 @@
     const showDownload = ref(false);
     const loadedSignature = ref("");
     const loadedModelKey = ref("");
+    const isIndexStatusLoading = ref(true);
     const indexedCount = ref(0);
     const tagDocumentCount = ref(0);
     const tagIndexedCount = ref(0);
@@ -419,8 +420,12 @@
     }
 
     async function refreshIndexStatus() {
+        isIndexStatusLoading.value = true;
         const model = selectedModelInfo.value;
-        if (!model || !config.modelLocation) return;
+        if (!model || !config.modelLocation) {
+            isIndexStatusLoading.value = false;
+            return;
+        }
         const databasePath = path.join(
             config.modelLocation,
             "embedding",
@@ -444,6 +449,8 @@
         } catch (error) {
             indexStatus.value = `索引状态读取失败：${errorMessage(error)}`;
             console.error("读取语义索引状态失败", error);
+        } finally {
+            isIndexStatusLoading.value = false;
         }
     }
 
@@ -1591,34 +1598,60 @@
             <n-tab-pane name="search" tab="相似图片搜索">
                 <section class="search-panel">
                     <div class="search-toolbar">
-                        <FormHelp
-                            :content="t('semantic_search.search_mode_desc')"
-                        />
-                        <n-radio-group
-                            v-model:value="searchMode"
-                            :disabled="isSearching || isIndexing || isTagIndexing"
-                        >
-                            <n-radio-button value="text">文字</n-radio-button>
-                            <n-radio-button value="image">当前图片</n-radio-button>
-                        </n-radio-group>
-                        <div class="vector-controls-grid">
-                            <template v-if="searchMode === 'text'">
+                        <div class="search-mode-row">
+                            <FormHelp :content="t('semantic_search.search_mode_desc')" />
+                            <n-radio-group
+                                v-model:value="searchMode"
+                                :disabled="isSearching || isIndexing || isTagIndexing"
+                            >
+                                <n-radio-button value="text">文字</n-radio-button>
+                                <n-radio-button value="image">当前图片</n-radio-button>
+                            </n-radio-group>
+                        </div>
+                        <div v-if="searchMode === 'text'" class="positive-search-row">
+                            <div class="vector-controls-grid">
                                 <div class="vector-control-block">
-                                    <n-checkbox v-model:checked="includeImages" :disabled="isSearching || isIndexing || !canIncludeImages">
+                                    <n-checkbox v-model:checked="includeImages" :disabled="isSearching || isIndexing || isIndexStatusLoading || !canIncludeImages">
                                         <span class="field-label">{{ t("semantic_search.vector_image") }}</span>
                                     </n-checkbox>
+                                    <n-spin v-if="isIndexStatusLoading" :size="14" />
                                 </div>
                                 <div class="vector-control-block">
-                                    <n-checkbox v-model:checked="includeAnnotations" :disabled="isSearching || isIndexing || isAnnotationIndexing || !canIncludeAnnotations">
+                                    <n-checkbox v-model:checked="includeAnnotations" :disabled="isSearching || isIndexing || isAnnotationIndexing || isIndexStatusLoading || !canIncludeAnnotations">
                                         <span class="field-label">{{ t("semantic_search.vector_annotation") }}</span>
                                     </n-checkbox>
+                                    <n-spin v-if="isIndexStatusLoading" :size="14" />
                                 </div>
                                 <div class="vector-control-block">
-                                    <n-checkbox v-model:checked="includeTags" :disabled="isSearching || isIndexing || isTagIndexing || !canIncludeTags">
+                                    <n-checkbox v-model:checked="includeTags" :disabled="isSearching || isIndexing || isTagIndexing || isIndexStatusLoading || !canIncludeTags">
                                         <span class="field-label">{{ t("semantic_search.vector_tag") }}</span>
                                     </n-checkbox>
+                                    <n-spin v-if="isIndexStatusLoading" :size="14" />
                                 </div>
-                            </template>
+                            </div>
+                            <FormHelp :content="t('semantic_search.query_desc')" />
+                            <n-input
+                                v-model:value="queryText"
+                                clearable
+                                placeholder="输入要搜索的画面或概念"
+                                :disabled="isSearching || isIndexing || isTagIndexing"
+                                @keyup.enter="runSearch"
+                            />
+                        </div>
+                        <div v-else class="positive-search-row">
+                            <div class="selected-image-mode">
+                                <n-icon :size="20"><ImageOutline /></n-icon>
+                                <span>当前选中图片</span>
+                            </div>
+                        </div>
+                        <div class="negative-search-row">
+                            <n-input
+                                v-model:value="negativeQueryText"
+                                clearable
+                                placeholder="负面搜索：排除的内容"
+                                :disabled="isSearching || isIndexing || isTagIndexing"
+                                @keyup.enter="runSearch"
+                            />
                             <div class="vector-control-block vector-control-block--weight">
                                 <span class="field-label">{{ t("semantic_search.negative_prompt_weight") }}</span>
                                 <div class="negative-weight-control">
@@ -1632,44 +1665,18 @@
                                     <span class="negative-weight-value">{{ negativePromptWeight.toFixed(2) }}</span>
                                 </div>
                             </div>
+                            <n-button
+                                type="primary"
+                                :loading="isSearching"
+                                :disabled="!selectedModel || isIndexing || isTagIndexing || isIndexStatusLoading"
+                                @click="runSearch"
+                            >
+                                <template #icon>
+                                    <n-icon><SearchOutline /></n-icon>
+                                </template>
+                                搜索
+                            </n-button>
                         </div>
-                        <span v-if="searchMode === 'text' && !canIncludeTags" class="field-label vector-hint">
-                            完成标签向量化后可开启
-                        </span>
-                        <FormHelp
-                            v-if="searchMode === 'text'"
-                            :content="t('semantic_search.query_desc')"
-                        />
-                        <n-input
-                            v-if="searchMode === 'text'"
-                            v-model:value="queryText"
-                            clearable
-                            placeholder="输入要搜索的画面或概念"
-                            :disabled="isSearching || isIndexing || isTagIndexing"
-                            @keyup.enter="runSearch"
-                        />
-                        <n-input
-                            v-model:value="negativeQueryText"
-                            clearable
-                            placeholder="负面搜索：排除的内容"
-                            :disabled="isSearching || isIndexing || isTagIndexing"
-                            @keyup.enter="runSearch"
-                        />
-                        <div v-if="searchMode === 'image'" class="selected-image-mode">
-                            <n-icon :size="20"><ImageOutline /></n-icon>
-                            <span>当前选中图片</span>
-                        </div>
-                        <n-button
-                            type="primary"
-                            :loading="isSearching"
-                            :disabled="!selectedModel || isIndexing || isTagIndexing"
-                            @click="runSearch"
-                        >
-                            <template #icon>
-                                <n-icon><SearchOutline /></n-icon>
-                            </template>
-                            搜索
-                        </n-button>
                     </div>
 
                     <div class="results-heading">
@@ -1945,24 +1952,32 @@
         position: sticky;
         top: -22px;
         z-index: 4;
-        flex-wrap: wrap;
+        flex-direction: column;
+        align-items: stretch;
         padding: 12px 0;
         background: #101214;
         border-bottom: 1px solid #2b2f33;
     }
 
+    .search-mode-row,
+    .positive-search-row,
+    .negative-search-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+    }
+
     .search-toolbar :deep(.n-input) {
-        flex: 1;
+        flex: 1 1 240px;
         min-width: 180px;
     }
 
     .vector-controls-grid {
         display: flex;
         align-items: center;
-        flex-wrap: wrap;
         gap: 12px;
-        flex: 0 0 100%;
-        width: 100%;
+        flex: none;
         min-width: 0;
     }
 
@@ -1996,11 +2011,6 @@
         font-variant-numeric: tabular-nums;
         font-size: 12px;
         text-align: right;
-    }
-
-    .vector-hint {
-        display: inline-block;
-        margin-top: 6px;
     }
 
     .selected-image-mode {
@@ -2185,6 +2195,12 @@
 
         .model-toolbar,
         .search-toolbar {
+            flex-wrap: wrap;
+        }
+
+        .positive-search-row,
+        .negative-search-row,
+        .vector-controls-grid {
             flex-wrap: wrap;
         }
 
