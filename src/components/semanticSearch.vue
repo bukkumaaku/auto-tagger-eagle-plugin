@@ -1601,19 +1601,27 @@
                             <n-radio-button value="text">文字</n-radio-button>
                             <n-radio-button value="image">当前图片</n-radio-button>
                         </n-radio-group>
-                        <div v-if="searchMode === 'text'" class="vector-controls-grid">
-                            <div class="vector-control-block">
-                                <span class="field-label">{{ t("semantic_search.vector_image") }}</span>
-                                <n-checkbox v-model:checked="includeImages" :disabled="isSearching || isIndexing || !canIncludeImages" />
-                            </div>
-                            <div class="vector-control-block">
-                                <span class="field-label">{{ t("semantic_search.vector_annotation") }}</span>
-                                <n-checkbox v-model:checked="includeAnnotations" :disabled="isSearching || isIndexing || isAnnotationIndexing || !canIncludeAnnotations" />
-                            </div>
-                            <div class="vector-control-block">
-                                <span class="field-label">{{ t("semantic_search.vector_tag") }}</span>
-                                <n-checkbox v-model:checked="includeTags" :disabled="isSearching || isIndexing || isTagIndexing || !canIncludeTags" />
-                            </div>
+                        <div
+                            class="vector-controls-grid"
+                            :class="{ 'vector-controls-grid--negative-only': searchMode === 'image' }"
+                        >
+                            <template v-if="searchMode === 'text'">
+                                <div class="vector-control-block">
+                                    <n-checkbox v-model:checked="includeImages" :disabled="isSearching || isIndexing || !canIncludeImages">
+                                        <span class="field-label">{{ t("semantic_search.vector_image") }}</span>
+                                    </n-checkbox>
+                                </div>
+                                <div class="vector-control-block">
+                                    <n-checkbox v-model:checked="includeAnnotations" :disabled="isSearching || isIndexing || isAnnotationIndexing || !canIncludeAnnotations">
+                                        <span class="field-label">{{ t("semantic_search.vector_annotation") }}</span>
+                                    </n-checkbox>
+                                </div>
+                                <div class="vector-control-block">
+                                    <n-checkbox v-model:checked="includeTags" :disabled="isSearching || isIndexing || isTagIndexing || !canIncludeTags">
+                                        <span class="field-label">{{ t("semantic_search.vector_tag") }}</span>
+                                    </n-checkbox>
+                                </div>
+                            </template>
                             <div class="vector-control-block vector-control-block--weight">
                                 <span class="field-label">{{ t("semantic_search.negative_prompt_weight") }}</span>
                                 <div class="negative-weight-control">
@@ -1628,7 +1636,7 @@
                                 </div>
                             </div>
                         </div>
-                        <span v-if="!canIncludeTags" class="field-label vector-hint">
+                        <span v-if="searchMode === 'text' && !canIncludeTags" class="field-label vector-hint">
                             完成标签向量化后可开启
                         </span>
                         <FormHelp
@@ -1957,6 +1965,10 @@
         gap: 12px;
         width: 100%;
         min-width: 0;
+    }
+
+    .vector-controls-grid--negative-only {
+        grid-template-columns: minmax(0, 1fr);
     }
 
     .vector-control-block {
