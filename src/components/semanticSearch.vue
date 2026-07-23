@@ -1601,10 +1601,7 @@
                             <n-radio-button value="text">文字</n-radio-button>
                             <n-radio-button value="image">当前图片</n-radio-button>
                         </n-radio-group>
-                        <div
-                            class="vector-controls-grid"
-                            :class="{ 'vector-controls-grid--negative-only': searchMode === 'image' }"
-                        >
+                        <div class="vector-controls-grid">
                             <template v-if="searchMode === 'text'">
                                 <div class="vector-control-block">
                                     <n-checkbox v-model:checked="includeImages" :disabled="isSearching || isIndexing || !canIncludeImages">
@@ -1960,26 +1957,21 @@
     }
 
     .vector-controls-grid {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
         gap: 12px;
         flex: 0 0 100%;
         width: 100%;
         min-width: 0;
     }
 
-    .vector-controls-grid--negative-only {
-        grid-template-columns: minmax(0, 1fr);
-    }
-
     .vector-control-block {
-        display: grid;
+        display: flex;
+        align-items: center;
         gap: 8px;
         min-width: 0;
-        padding: 10px 12px;
-        border: 1px solid #343a40;
-        border-radius: 4px;
-        background: rgba(255, 255, 255, 0.02);
+        padding: 0;
     }
 
     .vector-control-block--weight {
@@ -1994,8 +1986,8 @@
     }
 
     .negative-weight-control :deep(.n-slider) {
-        flex: 1;
-        min-width: 0;
+        flex: 0 0 120px;
+        width: 120px;
     }
 
     .negative-weight-value {
@@ -2009,18 +2001,6 @@
     .vector-hint {
         display: inline-block;
         margin-top: 6px;
-    }
-
-    @media (max-width: 1180px) {
-        .vector-controls-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
-    }
-
-    @media (max-width: 760px) {
-        .vector-controls-grid {
-            grid-template-columns: 1fr;
-        }
     }
 
     .selected-image-mode {
