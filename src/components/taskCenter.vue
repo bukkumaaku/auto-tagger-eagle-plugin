@@ -88,7 +88,12 @@
         </button>
     </div>
 
-    <n-drawer v-model:show="visible" :width="420" placement="right">
+    <n-drawer
+        v-model:show="visible"
+        :width="420"
+        placement="right"
+        :drawer-style="{ top: '30px', height: 'calc(100% - 30px)' }"
+    >
         <n-drawer-content title="任务中心" closable>
             <n-tabs type="line" animated>
                 <n-tab-pane name="tasks" tab="任务">
@@ -228,3 +233,4 @@
     .task-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
     .indeterminate { margin-top: 8px; }
 </style>
+
