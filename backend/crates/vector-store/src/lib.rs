@@ -2,7 +2,9 @@
 
 use std::{collections::HashSet, path::Path, sync::Once};
 
-use rusqlite::{Connection, OptionalExtension, Transaction, ffi::sqlite3_auto_extension, params};
+use rusqlite::{
+    Connection, OpenFlags, OptionalExtension, Transaction, ffi::sqlite3_auto_extension, params,
+};
 use sqlite_vec::sqlite3_vec_init;
 use thiserror::Error;
 
@@ -153,7 +155,8 @@ impl VectorStore {
         if !path.exists() {
             return Ok(None);
         }
-        let connection = Connection::open(path)?;
+        register_sqlite_vec();
+        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         let table_exists = connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'vector_models')",
             [],
@@ -172,9 +175,21 @@ impl VectorStore {
         else {
             return Ok(None);
         };
+        let vector_table = vector_table_name(model_id);
+        let vector_table_exists = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = ?1)",
+            [&vector_table],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !vector_table_exists {
+            return Ok(Some(VectorStoreStatus::default()));
+        }
         let indexed_count = connection.query_row(
-            "SELECT COUNT(*) FROM model_vector_items
-             WHERE model_id = ?1 AND namespace = ?2 AND modality = 'image'",
+            &format!(
+                "SELECT COUNT(*) FROM model_vector_items i
+             JOIN {vector_table} v ON v.rowid = i.id
+             WHERE i.model_id = ?1 AND i.namespace = ?2 AND i.modality = 'image'"
+            ),
             params![model_id, namespace],
             |row| row.get(0),
         )?;
@@ -193,7 +208,7 @@ impl VectorStore {
         if !path.exists() {
             return Ok(None);
         }
-        let connection = Connection::open(path)?;
+        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         let table_exists = connection.query_row(
             "SELECT EXISTS(
                  SELECT 1 FROM sqlite_master
@@ -215,10 +230,19 @@ impl VectorStore {
     }
 
     pub fn merge_model(&mut self, source_model_key: &str) -> Result<u64, StoreError> {
+        self.merge_model_filtered(source_model_key, None)
+    }
+
+    fn merge_model_filtered(
+        &mut self,
+        source_model_key: &str,
+        namespace: Option<&str>,
+    ) -> Result<u64, StoreError> {
         let source_model_key = source_model_key.trim();
         if source_model_key.is_empty() || source_model_key == self.model_key {
             return Ok(0);
         }
+        let namespace = namespace.unwrap_or("");
         let source = self
             .connection
             .query_row(
@@ -238,7 +262,7 @@ impl VectorStore {
             });
         }
         let has_pending = self.connection.query_row(
-            "SELECT EXISTS(
+            &format!("SELECT EXISTS(
                  SELECT 1
                  FROM model_vector_items source
                  LEFT JOIN model_vector_items target
@@ -247,10 +271,12 @@ impl VectorStore {
                   AND target.item_id = source.item_id
                   AND target.modality = source.modality
                   AND target.source_key = source.source_key
+                 LEFT JOIN {} target_vector ON target_vector.rowid = target.id
                  WHERE source.model_id = ?1
-                   AND (target.id IS NULL OR source.updated_at > target.updated_at)
-             )",
-            params![source_id, self.model_id],
+                   AND (?3 = '' OR source.namespace = ?3)
+                   AND (target.id IS NULL OR target_vector.rowid IS NULL OR source.updated_at > target.updated_at)
+             )", self.vector_table),
+            params![source_id, self.model_id, namespace],
             |row| row.get::<_, bool>(0),
         )?;
         if !has_pending {
@@ -269,11 +295,14 @@ impl VectorStore {
                   AND target.item_id = i.item_id
                   AND target.modality = i.modality
                   AND target.source_key = i.source_key
+                 LEFT JOIN {} target_vector ON target_vector.rowid = target.id
                  WHERE i.model_id = ?1
-                   AND (target.id IS NULL OR i.updated_at > target.updated_at)"
+                   AND (?3 = '' OR i.namespace = ?3)
+                   AND (target.id IS NULL OR target_vector.rowid IS NULL OR i.updated_at > target.updated_at)",
+                self.vector_table
             ))?;
             statement
-                .query_map(params![source_id, self.model_id], |row| {
+                .query_map(params![source_id, self.model_id, namespace], |row| {
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
@@ -316,6 +345,112 @@ impl VectorStore {
         let imported = records.len() as u64;
         self.upsert_many(&records)?;
         Ok(imported)
+    }
+
+    pub fn read_pending_merge_count(
+        path: impl AsRef<Path>,
+        target_model_key: &str,
+        source_model_key: &str,
+        namespace: &str,
+        dimension: usize,
+    ) -> Result<u64, StoreError> {
+        let path = path.as_ref();
+        let target_model_key = target_model_key.trim();
+        let source_model_key = source_model_key.trim();
+        if !path.exists()
+            || target_model_key.is_empty()
+            || source_model_key.is_empty()
+            || source_model_key == target_model_key
+            || dimension == 0
+        {
+            return Ok(0);
+        }
+        register_sqlite_vec();
+        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let schema_exists = connection.query_row(
+            "SELECT COUNT(*) = 2 FROM sqlite_master
+             WHERE type = 'table' AND name IN ('vector_models', 'model_vector_items')",
+            [],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !schema_exists {
+            return Ok(0);
+        }
+        let source = connection
+            .query_row(
+                "SELECT id, dimension FROM vector_models WHERE model_key = ?1",
+                [source_model_key],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, usize>(1)?)),
+            )
+            .optional()?;
+        let Some((source_id, source_dimension)) = source else {
+            return Ok(0);
+        };
+        if source_dimension != dimension {
+            return Ok(0);
+        }
+        let source_table = vector_table_name(source_id);
+        let source_table_exists = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = ?1)",
+            [&source_table],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !source_table_exists {
+            return Ok(0);
+        }
+        let target_id = connection
+            .query_row(
+                "SELECT id FROM vector_models WHERE model_key = ?1 AND dimension = ?2",
+                params![target_model_key, dimension],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+        let (target_id, target_table) = if let Some(target_id) = target_id {
+            let target_table = vector_table_name(target_id);
+            let exists = connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = ?1)",
+                [&target_table],
+                |row| row.get::<_, bool>(0),
+            )?;
+            if exists {
+                (Some(target_id), target_table)
+            } else {
+                (None, source_table.clone())
+            }
+        } else {
+            (None, source_table.clone())
+        };
+        Ok(connection.query_row(
+            &format!(
+                "SELECT COUNT(*)
+             FROM model_vector_items source
+             JOIN {source_table} source_vector ON source_vector.rowid = source.id
+             LEFT JOIN model_vector_items target
+               ON target.model_id = ?2
+              AND target.namespace = source.namespace
+              AND target.item_id = source.item_id
+              AND target.modality = source.modality
+              AND target.source_key = source.source_key
+             LEFT JOIN {target_table} target_vector ON target_vector.rowid = target.id
+             WHERE source.model_id = ?1 AND source.namespace = ?3
+               AND source.modality = 'image'
+               AND (target.id IS NULL OR target_vector.rowid IS NULL OR source.updated_at > target.updated_at)"
+            ),
+            params![source_id, target_id, namespace],
+            |row| row.get(0),
+        )?)
+    }
+
+    pub fn merge_model_namespace(
+        &mut self,
+        source_model_key: &str,
+        namespace: &str,
+    ) -> Result<u64, StoreError> {
+        let namespace = namespace.trim();
+        if namespace.is_empty() {
+            return Ok(0);
+        }
+        self.merge_model_filtered(source_model_key, Some(namespace))
     }
 
     pub fn delete_compatible_models(&mut self) -> Result<ModelCleanupResult, StoreError> {
@@ -1218,6 +1353,81 @@ mod tests {
             vec![0.0, 1.0]
         );
         drop(current);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn readonly_status_detects_and_repairs_missing_vector_rows() {
+        let path = temporary_database_path("missing-vector-row");
+        {
+            let mut legacy = VectorStore::open(&path, "legacy", 2).unwrap();
+            legacy
+                .upsert(&record("image-1", Modality::Image, vec![1.0, 0.0]))
+                .unwrap();
+        }
+        assert_eq!(
+            VectorStore::read_pending_merge_count(&path, "current", "legacy", "library-a", 2)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            VectorStore::stored_dimension(&path, "current").unwrap(),
+            None
+        );
+
+        {
+            let mut current = VectorStore::open(&path, "current", 2).unwrap();
+            current
+                .upsert(&record("image-1", Modality::Image, vec![0.0, 1.0]))
+                .unwrap();
+            let row_id = current
+                .connection
+                .query_row(
+                    "SELECT id FROM model_vector_items WHERE model_id = ?1 AND item_id = 'image-1'",
+                    [current.model_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap();
+            current
+                .connection
+                .execute(
+                    &format!("DELETE FROM {} WHERE rowid = ?1", current.vector_table),
+                    [row_id],
+                )
+                .unwrap();
+        }
+
+        assert_eq!(
+            VectorStore::read_status(&path, "current", "library-a")
+                .unwrap()
+                .unwrap()
+                .indexed_count,
+            0
+        );
+        assert_eq!(
+            VectorStore::read_pending_merge_count(&path, "current", "legacy", "library-a", 2)
+                .unwrap(),
+            1
+        );
+        let mut current = VectorStore::open(&path, "current", 2).unwrap();
+        assert_eq!(
+            current
+                .merge_model_namespace("legacy", "library-a")
+                .unwrap(),
+            1
+        );
+        drop(current);
+        assert_eq!(
+            VectorStore::read_status(&path, "current", "library-a")
+                .unwrap()
+                .unwrap()
+                .indexed_count,
+            1
+        );
+        assert_eq!(
+            VectorStore::stored_dimension(&path, "legacy").unwrap(),
+            Some(2)
+        );
         std::fs::remove_file(path).unwrap();
     }
 

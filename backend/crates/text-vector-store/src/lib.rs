@@ -2,7 +2,9 @@
 
 use std::{collections::HashSet, path::Path, sync::Once, time::Duration};
 
-use rusqlite::{Connection, OptionalExtension, Transaction, ffi::sqlite3_auto_extension, params};
+use rusqlite::{
+    Connection, OpenFlags, OptionalExtension, Transaction, ffi::sqlite3_auto_extension, params,
+};
 use sqlite_vec::sqlite3_vec_init;
 use thiserror::Error;
 
@@ -57,6 +59,8 @@ pub struct TextVectorStoreStatus {
     pub annotation_document_count: u64,
     pub annotation_indexed_count: u64,
     pub legacy_model_detected: bool,
+    pub reusable_tag_count: u64,
+    pub reusable_annotation_count: u64,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -160,19 +164,26 @@ impl TextVectorStore {
     pub fn read_status(
         path: impl AsRef<Path>,
         model_key: &str,
+        legacy_model_key: &str,
         namespace: &str,
+        dimension: usize,
     ) -> Result<TextVectorStoreStatus, StoreError> {
         let path = path.as_ref();
         if !path.exists() {
             return Ok(TextVectorStoreStatus::default());
         }
-        let connection = Connection::open(path)?;
-        let table_exists = connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'text_documents')",
+        register_sqlite_vec();
+        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let schema_exists = connection.query_row(
+            "SELECT COUNT(*) = 4 FROM sqlite_master
+             WHERE type = 'table' AND name IN (
+                 'text_documents', 'text_document_links',
+                 'text_vector_models', 'text_model_embeddings'
+             )",
             [],
-            |row| row.get::<_, i64>(0),
+            |row| row.get::<_, bool>(0),
         )?;
-        if table_exists == 0 {
+        if !schema_exists {
             return Ok(TextVectorStoreStatus::default());
         }
         let tag_document_count = count_documents_readonly(&connection, namespace, "tag")?;
@@ -191,13 +202,39 @@ impl TextVectorStore {
             "annotation",
             &format!("{model_key}::annotation"),
         )?;
+        let reusable_tag_count = count_reusable_embeddings(
+            &connection,
+            namespace,
+            "tag",
+            &format!("{model_key}::tag"),
+            &[
+                format!("{legacy_model_key}::tag"),
+                legacy_model_key.to_string(),
+                model_key.to_string(),
+            ],
+            dimension,
+        )?;
+        let reusable_annotation_count = count_reusable_embeddings(
+            &connection,
+            namespace,
+            "annotation",
+            &format!("{model_key}::annotation"),
+            &[
+                format!("{legacy_model_key}::annotation"),
+                legacy_model_key.to_string(),
+                model_key.to_string(),
+            ],
+            dimension,
+        )?;
         Ok(TextVectorStoreStatus {
             tag_document_count,
             tag_indexed_count,
             tag_link_count,
             annotation_document_count,
             annotation_indexed_count,
-            legacy_model_detected: false,
+            legacy_model_detected: reusable_tag_count > 0 || reusable_annotation_count > 0,
+            reusable_tag_count,
+            reusable_annotation_count,
         })
     }
 
@@ -409,9 +446,30 @@ impl TextVectorStore {
         self.merge_model_filtered(source_model_key, Some(kind), &mut on_progress)
     }
 
+    pub fn merge_model_kind_in_namespace_with_progress(
+        &mut self,
+        source_model_key: &str,
+        namespace: &str,
+        kind: &str,
+        mut on_progress: impl FnMut(u64, u64),
+    ) -> Result<u64, StoreError> {
+        let namespace = namespace.trim();
+        let kind = kind.trim();
+        if namespace.is_empty() || kind.is_empty() {
+            return Ok(0);
+        }
+        self.merge_model_filtered_in_namespace(
+            source_model_key,
+            Some(namespace),
+            Some(kind),
+            &mut on_progress,
+        )
+    }
+
     pub fn pending_merge_count(
         &self,
         source_model_key: &str,
+        namespace: &str,
         kind: &str,
     ) -> Result<u64, StoreError> {
         let source_model_key = source_model_key.trim();
@@ -437,16 +495,20 @@ impl TextVectorStore {
                 requested: self.dimension,
             });
         }
+        let source_table = vector_table_name(source_id);
         Ok(self.connection.query_row(
-            "SELECT COUNT(*)
+            &format!("SELECT COUNT(*)
              FROM text_model_embeddings e
              JOIN text_documents d ON d.id = e.document_row_id
+             JOIN {source_table} source_vector ON source_vector.rowid = e.id
              LEFT JOIN text_model_embeddings target
                ON target.model_id = ?2
               AND target.document_row_id = e.document_row_id
-             WHERE e.model_id = ?1 AND d.kind = ?3
-               AND (target.id IS NULL OR e.document_revision > target.document_revision)",
-            params![source_id, self.model_id, kind],
+             LEFT JOIN {} target_vector ON target_vector.rowid = target.id
+             WHERE e.model_id = ?1 AND d.namespace = ?3 AND d.kind = ?4
+               AND e.document_revision = d.revision
+               AND (target.id IS NULL OR target_vector.rowid IS NULL OR e.document_revision > target.document_revision)", self.vector_table),
+            params![source_id, self.model_id, namespace, kind],
             |row| row.get(0),
         )?)
     }
@@ -457,10 +519,21 @@ impl TextVectorStore {
         kind: Option<&str>,
         on_progress: &mut dyn FnMut(u64, u64),
     ) -> Result<u64, StoreError> {
+        self.merge_model_filtered_in_namespace(source_model_key, None, kind, on_progress)
+    }
+
+    fn merge_model_filtered_in_namespace(
+        &mut self,
+        source_model_key: &str,
+        namespace: Option<&str>,
+        kind: Option<&str>,
+        on_progress: &mut dyn FnMut(u64, u64),
+    ) -> Result<u64, StoreError> {
         let source_model_key = source_model_key.trim();
         if source_model_key.is_empty() || source_model_key == self.model_key {
             return Ok(0);
         }
+        let namespace = namespace.unwrap_or("");
         let kind = kind.unwrap_or("");
         let source = self
             .connection
@@ -491,12 +564,15 @@ impl TextVectorStore {
                  LEFT JOIN text_model_embeddings target
                    ON target.model_id = ?2
                   AND target.document_row_id = e.document_row_id
+                 LEFT JOIN {} target_vector ON target_vector.rowid = target.id
                  WHERE e.model_id = ?1
-                   AND (?3 = '' OR d.kind = ?3)
-                   AND (target.id IS NULL OR e.document_revision > target.document_revision)"
+                   AND (?3 = '' OR d.namespace = ?3)
+                   AND (?4 = '' OR d.kind = ?4)
+                   AND (target.id IS NULL OR target_vector.rowid IS NULL OR e.document_revision > target.document_revision)",
+                self.vector_table
             ))?;
             statement
-                .query_map(params![source_id, self.model_id, kind], |row| {
+                .query_map(params![source_id, self.model_id, namespace, kind], |row| {
                     Ok((
                         row.get::<_, i64>(0)?,
                         row.get::<_, i64>(1)?,
@@ -971,15 +1047,108 @@ fn count_embeddings_for_model(
     else {
         return Ok(0);
     };
+    let vector_table = vector_table_name(model_id);
+    let vector_table_exists = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = ?1)",
+        [&vector_table],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if !vector_table_exists {
+        return Ok(0);
+    }
     Ok(connection.query_row(
-        "SELECT COUNT(*)
+        &format!(
+            "SELECT COUNT(*)
          FROM text_model_embeddings e
          JOIN text_documents d ON d.id = e.document_row_id
+         JOIN {vector_table} v ON v.rowid = e.id
          WHERE e.model_id = ?1 AND d.namespace = ?2 AND d.kind = ?3
-           AND e.document_revision = d.revision",
+           AND e.document_revision = d.revision"
+        ),
         params![model_id, namespace, kind],
         |row| row.get(0),
     )?)
+}
+
+fn count_reusable_embeddings(
+    connection: &Connection,
+    namespace: &str,
+    kind: &str,
+    target_model_key: &str,
+    source_model_keys: &[String],
+    dimension: usize,
+) -> Result<u64, StoreError> {
+    let target_id = connection
+        .query_row(
+            "SELECT id FROM text_vector_models WHERE model_key = ?1",
+            [target_model_key],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?;
+    let target_table = if let Some(target_id) = target_id {
+        let table = vector_table_name(target_id);
+        let exists = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = ?1)",
+            [&table],
+            |row| row.get::<_, bool>(0),
+        )?;
+        exists.then_some(table)
+    } else {
+        None
+    };
+    let target_id = if target_table.is_some() {
+        target_id
+    } else {
+        None
+    };
+    let mut reusable = HashSet::new();
+    for source_key in source_model_keys {
+        let source_key = source_key.trim();
+        if source_key.is_empty() || source_key == target_model_key {
+            continue;
+        }
+        let source = connection
+            .query_row(
+                "SELECT id, dimension FROM text_vector_models WHERE model_key = ?1",
+                [source_key],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, usize>(1)?)),
+            )
+            .optional()?;
+        let Some((source_id, source_dimension)) = source else {
+            continue;
+        };
+        if dimension == 0 || source_dimension != dimension {
+            continue;
+        }
+        let source_table = vector_table_name(source_id);
+        let source_table_exists = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = ?1)",
+            [&source_table],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !source_table_exists {
+            continue;
+        }
+        let target_table = target_table.as_deref().unwrap_or(&source_table);
+        let mut statement = connection.prepare(&format!(
+            "SELECT e.document_row_id
+             FROM text_model_embeddings e
+             JOIN text_documents d ON d.id = e.document_row_id
+             JOIN {source_table} v ON v.rowid = e.id
+             LEFT JOIN text_model_embeddings target
+               ON target.model_id = ?2 AND target.document_row_id = e.document_row_id
+             LEFT JOIN {target_table} target_vector ON target_vector.rowid = target.id
+             WHERE e.model_id = ?1 AND d.namespace = ?3 AND d.kind = ?4
+               AND e.document_revision = d.revision
+               AND (target.id IS NULL OR target_vector.rowid IS NULL OR e.document_revision > target.document_revision)"
+        ))?;
+        for row in statement.query_map(params![source_id, target_id, namespace, kind], |row| {
+            row.get::<_, i64>(0)
+        })? {
+            reusable.insert(row?);
+        }
+    }
+    Ok(reusable.len() as u64)
 }
 
 #[derive(Clone, Debug)]
@@ -1552,7 +1721,7 @@ mod tests {
             None
         );
         let status =
-            TextVectorStore::read_status(database.path(), current_key, "library-a").unwrap();
+            TextVectorStore::read_status(database.path(), current_key, "", "library-a", 2).unwrap();
         assert_eq!(status.tag_indexed_count, 1);
         assert!(!status.legacy_model_detected);
     }

@@ -715,6 +715,9 @@ pub fn status(
                 annotation_document_count: annotation_document_count(&session)?,
                 annotation_indexed_count: annotation_indexed_count(&session)?,
                 legacy_text_model_detected: false,
+                reusable_image_count: 0,
+                reusable_tag_count: 0,
+                reusable_annotation_count: 0,
             });
         }
     }
@@ -738,10 +741,36 @@ pub fn status(
     )
     .map_err(store_error)?
     .unwrap_or_default();
+    let dimension = VectorStore::stored_dimension(&request.database_path, &request.model_key)
+        .map_err(store_error)?
+        .or_else(|| {
+            VectorStore::stored_dimension(&request.database_path, &request.legacy_model_key)
+                .ok()
+                .flatten()
+        })
+        .unwrap_or(request.dimension);
+    let reusable_image_count = if request.legacy_model_key.trim().is_empty() {
+        0
+    } else {
+        if dimension == 0 {
+            0
+        } else {
+            VectorStore::read_pending_merge_count(
+                &request.database_path,
+                &request.model_key,
+                &request.legacy_model_key,
+                &request.namespace,
+                dimension,
+            )
+            .map_err(store_error)?
+        }
+    };
     let text_status = TextVectorStore::read_status(
         &request.database_path,
         &request.model_key,
+        &request.legacy_model_key,
         &request.namespace,
+        dimension,
     )
     .map_err(store_error)?;
     Ok(EmbeddingStatusResult {
@@ -754,6 +783,9 @@ pub fn status(
         annotation_document_count: text_status.annotation_document_count,
         annotation_indexed_count: text_status.annotation_indexed_count,
         legacy_text_model_detected: text_status.legacy_model_detected,
+        reusable_image_count,
+        reusable_tag_count: text_status.reusable_tag_count,
+        reusable_annotation_count: text_status.reusable_annotation_count,
     })
 }
 
@@ -804,6 +836,16 @@ pub fn migrate_text(
             "cannot determine embedding dimension for text migration",
         ));
     }
+    let mut image_store = VectorStore::open(&request.database_path, &request.model_key, dimension)
+        .map_err(store_error)?;
+    let image_indexed_count = if request.legacy_model_key.trim().is_empty() {
+        image_store.count(&request.namespace).map_err(store_error)?
+    } else {
+        image_store
+            .merge_model_namespace(&request.legacy_model_key, &request.namespace)
+            .map_err(store_error)?;
+        image_store.count(&request.namespace).map_err(store_error)?
+    };
     let mut tag_store = TextVectorStore::open(
         &request.database_path,
         format!("{}::tag", request.model_key),
@@ -821,6 +863,7 @@ pub fn migrate_text(
         &mut annotation_store,
         &request.model_key,
         &request.legacy_model_key,
+        &request.namespace,
         |phase, completed, total| {
             let _ = events.progress(ProgressPayload::EmbeddingTextMigration(
                 EmbeddingTextMigrationProgress {
@@ -834,6 +877,7 @@ pub fn migrate_text(
     .map_err(|error| HandlerError::new("EMBEDDING_MIGRATION_FAILED", error))?;
     Ok(EmbeddingMigrateTextResult {
         model_key: request.model_key,
+        image_indexed_count,
         tag_indexed_count: tag_store
             .count_embeddings(&request.namespace, "tag")
             .map_err(store_error)?,
@@ -1036,6 +1080,7 @@ fn migrate_legacy_text_indexes_with_progress(
     annotation_store: &mut TextVectorStore,
     current_model_key: &str,
     legacy_model_key: &str,
+    namespace: &str,
     mut on_progress: impl FnMut(String, u64, u64),
 ) -> Result<(), String> {
     let current_model_key = current_model_key.trim();
@@ -1065,7 +1110,7 @@ fn migrate_legacy_text_indexes_with_progress(
                 &*annotation_store
             };
             store
-                .pending_merge_count(source, kind)
+                .pending_merge_count(source, namespace, kind)
                 .map_err(|error| error.to_string())
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -1084,19 +1129,29 @@ fn migrate_legacy_text_indexes_with_progress(
         let base = completed;
         let imported = if is_tag {
             tag_store
-                .merge_model_kind_with_progress(&source, kind, |done, step_total| {
-                    if done == step_total || done % 25 == 0 {
-                        on_progress(phase.to_string(), base + done, total);
-                    }
-                })
+                .merge_model_kind_in_namespace_with_progress(
+                    &source,
+                    namespace,
+                    kind,
+                    |done, step_total| {
+                        if done == step_total || done % 25 == 0 {
+                            on_progress(phase.to_string(), base + done, total);
+                        }
+                    },
+                )
                 .map_err(|error| error.to_string())?
         } else {
             annotation_store
-                .merge_model_kind_with_progress(&source, kind, |done, step_total| {
-                    if done == step_total || done % 25 == 0 {
-                        on_progress(phase.to_string(), base + done, total);
-                    }
-                })
+                .merge_model_kind_in_namespace_with_progress(
+                    &source,
+                    namespace,
+                    kind,
+                    |done, step_total| {
+                        if done == step_total || done % 25 == 0 {
+                            on_progress(phase.to_string(), base + done, total);
+                        }
+                    },
+                )
                 .map_err(|error| error.to_string())?
         };
         completed += imported;
@@ -1791,12 +1846,15 @@ mod tests {
             &SessionManager::default(),
         )
         .unwrap();
-        assert_eq!(result.indexed_count, 1);
+        assert_eq!(result.indexed_count, 0);
+        assert_eq!(result.reusable_image_count, 1);
         assert_eq!(result.tag_document_count, 1);
         assert_eq!(result.tag_indexed_count, 0);
         assert_eq!(result.tag_link_count, 1);
         assert!(result.legacy_text_model_detected);
-        assert_eq!(result.model_key, "legacy");
+        assert_eq!(result.reusable_tag_count, 1);
+        assert_eq!(result.reusable_annotation_count, 0);
+        assert_eq!(result.model_key, "current");
         std::fs::remove_file(database_path).unwrap();
     }
 

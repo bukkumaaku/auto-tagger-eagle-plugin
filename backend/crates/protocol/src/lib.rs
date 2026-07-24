@@ -766,12 +766,16 @@ pub struct EmbeddingStatusResult {
     pub annotation_document_count: u64,
     pub annotation_indexed_count: u64,
     pub legacy_text_model_detected: bool,
+    pub reusable_image_count: u64,
+    pub reusable_tag_count: u64,
+    pub reusable_annotation_count: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EmbeddingMigrateTextResult {
     pub model_key: String,
+    pub image_indexed_count: u64,
     pub tag_indexed_count: u64,
     pub annotation_indexed_count: u64,
 }

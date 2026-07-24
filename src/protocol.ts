@@ -472,9 +472,13 @@ export type EmbeddingStatusResult = {
     annotationDocumentCount: number;
     annotationIndexedCount: number;
     legacyTextModelDetected?: boolean;
+    reusableImageCount: number;
+    reusableTagCount: number;
+    reusableAnnotationCount: number;
 };
 export type EmbeddingMigrateTextResult = {
     modelKey: string;
+    imageIndexedCount: number;
     tagIndexedCount: number;
     annotationIndexedCount: number;
 };
