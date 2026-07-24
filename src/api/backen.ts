@@ -42,6 +42,7 @@ export const notification = (
 
 export let config = {} as Config;
 export const configRevision = ref(0);
+export const configLoaded = ref(false);
 export const completeItem = ref(0);
 export const t = ref((key: any) => i18next.t(key));
 export const convertPath = (filePath: string) => {
@@ -68,6 +69,7 @@ export const backenAPI = {
         await configWriteQueue;
         const result = await getBackendClient().readConfig();
         config = result.config;
+        configLoaded.value = true;
         configRevision.value++;
         return config;
     },
