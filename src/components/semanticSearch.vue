@@ -381,7 +381,7 @@
         isLoadingModels.value = true;
         try {
             const localModels = await scanLocalEmbeddingModels(config.modelLocation);
-            const profiles = config.embeddingRemoteProfiles?.length ? config.embeddingRemoteProfiles : (config.embeddingModelName && config.endpoint ? [{ id: "legacy", name: "远程接口", provider: config.embeddingProvider === "gemini" ? "gemini" as const : "open_ai" as const, endpoint: config.endpoint, apiKey: config.apiKey, model: config.embeddingModelName, dimension: config.embeddingDimension }] : []);
+            const profiles = config.embeddingRemoteProfiles?.length ? config.embeddingRemoteProfiles : (config.embeddingModelName && config.endpoint ? [{ id: "legacy", name: "远程接口", provider: config.embeddingProvider === "gemini" ? "gemini" as const : "open_ai" as const, endpoint: config.endpoint, apiKey: config.apiKey, model: config.embeddingModelName, dimension: config.embeddingDimension, resolvedModelKey: config.embeddingResolvedModelKey }] : []);
             models.value = [
                 ...localModels.map((model) => ({
                     ...model,
@@ -392,7 +392,7 @@
                     apiKey: "",
                     legacyModelKey: "",
                 })),
-                ...profiles.filter((profile) => profile.model && profile.endpoint).map((profile) => { const dimension = profile.provider === "gemini" ? profile.dimension : 0; return { name: `${profile.name || profile.model} · ${profile.model}`, modelKey: remoteModelKey(profile.provider, profile.model, dimension), modelPath: "", tokenizerPath: "", dimension, provider: profile.provider, remoteModel: profile.model, selectionKey: `remote:${profile.id}`, endpoint: profile.endpoint, apiKey: profile.apiKey, legacyModelKey: endpointRemoteModelKey(profile.provider, profile.endpoint, profile.model, dimension) }; }),
+                ...profiles.filter((profile) => profile.model && profile.endpoint).map((profile) => { const dimension = profile.provider === "gemini" || profile.resolvedModelKey ? profile.dimension : 0; return { name: `${profile.name || profile.model} · ${profile.model}`, modelKey: profile.resolvedModelKey || remoteModelKey(profile.provider, profile.model, dimension), modelPath: "", tokenizerPath: "", dimension, provider: profile.provider, remoteModel: profile.model, selectionKey: `remote:${profile.id}`, endpoint: profile.endpoint, apiKey: profile.apiKey, legacyModelKey: profile.resolvedModelKey ? remoteModelKey(profile.provider, profile.model, 0) : endpointRemoteModelKey(profile.provider, profile.endpoint, profile.model, dimension) }; }),
             ];
             if (
                 !models.value.some(
@@ -495,7 +495,7 @@
             INDEX_FILENAME,
         );
         const namespace = await resolveLibraryNamespace();
-        const signature = [
+        let signature = [
             model.modelKey,
             model.modelPath,
             databasePath,
@@ -531,9 +531,28 @@
                 model.endpoint,
                 model.apiKey,
                 model.remoteModel,
-                model.provider === "gemini" ? model.dimension : 0,
+                model.dimension,
                 model.legacyModelKey,
             );
+            const requestedModelKey = model.modelKey;
+            if (model.provider === "open_ai" && (result.modelKey !== model.modelKey || result.dimension !== model.dimension)) {
+                model.modelKey = result.modelKey;
+                model.dimension = result.dimension;
+                model.legacyModelKey = requestedModelKey;
+                const profileId = model.selectionKey.replace(/^remote:/, "");
+                const profile = config.embeddingRemoteProfiles?.find((item) => item.id === profileId);
+                if (profile) {
+                    profile.dimension = result.dimension;
+                    profile.resolvedModelKey = result.modelKey;
+                } else {
+                    config.embeddingDimension = result.dimension;
+                    config.embeddingResolvedModelKey = result.modelKey;
+                }
+                settingsDirty = true;
+                lastModelConfigSignature = modelConfigSignature();
+                await persistSettings();
+                signature = [model.modelKey, model.modelPath, databasePath, namespace, config.embeddingDevice || "auto", model.provider, model.remoteModel, model.endpoint, model.apiKey, model.dimension, backend.workerGeneration].join("\u0000");
+            }
             indexedCount.value = result.indexedCount;
             tagDocumentCount.value = result.tagDocumentCount;
             tagIndexedCount.value = result.tagIndexedCount;
@@ -546,6 +565,12 @@
             );
             loadedSignature.value = signature;
             loadedModelKey.value = model.selectionKey;
+            if (model.provider === "open_ai" && model.legacyModelKey) {
+                const target = { databasePath, namespace, modelKey: model.modelKey, dimension: model.dimension, legacyModelKey: model.legacyModelKey };
+                legacyMigrationTarget.value = target;
+                invalidateSemanticIndexStatus();
+                applyIndexStatus(await fetchSemanticIndexStatus(target, true));
+            }
         }
     }
 

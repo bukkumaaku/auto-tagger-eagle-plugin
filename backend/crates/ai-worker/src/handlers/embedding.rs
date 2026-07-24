@@ -57,6 +57,7 @@ struct EmbeddingSessionSettings {
 }
 
 struct EmbeddingSession {
+    request_settings: EmbeddingSessionSettings,
     settings: EmbeddingSessionSettings,
     engine: EmbeddingEngine,
     store: VectorStore,
@@ -119,7 +120,7 @@ pub fn load(
         .map_err(session_error)?
     {
         let session = handle.lock().map_err(session_error)?;
-        if session.settings != settings {
+        if session.request_settings != settings {
             return Err(HandlerError::new(
                 "EMBEDDING_SESSION_CONFLICT",
                 format!(
@@ -131,6 +132,7 @@ pub fn load(
         return Ok(EmbeddingLoadResult {
             session_id: request.session_id,
             model_key: session.settings.model_key.clone(),
+            dimension: session.engine.dimension(),
             indexed_count: indexed_count(&session)?,
             tag_document_count: tag_document_count(&session)?,
             tag_indexed_count: tag_indexed_count(&session)?,
@@ -148,6 +150,7 @@ pub fn load(
     Ok(EmbeddingLoadResult {
         session_id: request.session_id,
         model_key: session.settings.model_key.clone(),
+        dimension: session.engine.dimension(),
         indexed_count: indexed_count(&session)?,
         tag_document_count: tag_document_count(&session)?,
         tag_indexed_count: tag_indexed_count(&session)?,
@@ -704,7 +707,7 @@ pub fn status(
             && (request.namespace.trim().is_empty()
                 || request.namespace == session.settings.namespace)
             && (request.dimension == 0 || request.dimension == session.engine.dimension());
-        if matches {
+        if matches && request.legacy_model_key.trim().is_empty() {
             return Ok(EmbeddingStatusResult {
                 session_id: request.session_id,
                 model_key: session.settings.model_key.clone(),
@@ -1160,7 +1163,8 @@ fn migrate_legacy_text_indexes_with_progress(
     Ok(())
 }
 
-fn create_session(settings: EmbeddingSessionSettings) -> Result<EmbeddingSession, String> {
+fn create_session(mut settings: EmbeddingSessionSettings) -> Result<EmbeddingSession, String> {
+    let request_settings = settings.clone();
     let engine = match settings.provider {
         EmbeddingProvider::Local => {
             let mut config = ClipConfig::new(&settings.model_path, &settings.tokenizer_path);
@@ -1177,6 +1181,14 @@ fn create_session(settings: EmbeddingSessionSettings) -> Result<EmbeddingSession
         EmbeddingProvider::Gemini => EmbeddingEngine::Gemini(GeminiEmbedding::load(&settings)?),
     };
     let dimension = engine.dimension();
+    if settings.provider == EmbeddingProvider::OpenAi {
+        let base_key = settings
+            .model_key
+            .split("::dimension:")
+            .next()
+            .unwrap_or(&settings.model_key);
+        settings.model_key = format!("{base_key}::dimension:{dimension}");
+    }
     let store = VectorStore::open(&settings.database_path, &settings.model_key, dimension)
         .map_err(|error| error.to_string())?;
     let tag_store = TextVectorStore::open(
@@ -1192,6 +1204,7 @@ fn create_session(settings: EmbeddingSessionSettings) -> Result<EmbeddingSession
     )
     .map_err(|error| error.to_string())?;
     Ok(EmbeddingSession {
+        request_settings,
         settings,
         engine,
         store,
@@ -1334,10 +1347,12 @@ impl RemoteEmbedding {
         let mut remote = Self {
             client,
             model: settings.remote_model.clone(),
-            dimension: 0,
+            dimension: settings.remote_dimension,
         };
-        let probe = remote.embed_text("dimension probe")?;
-        remote.dimension = probe.len();
+        if remote.dimension == 0 {
+            let probe = remote.embed_text("dimension probe")?;
+            remote.dimension = probe.len();
+        }
         Ok(remote)
     }
 

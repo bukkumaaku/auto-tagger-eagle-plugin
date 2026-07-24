@@ -619,6 +619,7 @@ pub struct ScanEmbeddingModelsResult {
 pub struct EmbeddingLoadResult {
     pub session_id: String,
     pub model_key: String,
+    pub dimension: usize,
     pub indexed_count: u64,
     pub tag_document_count: u64,
     pub tag_indexed_count: u64,
