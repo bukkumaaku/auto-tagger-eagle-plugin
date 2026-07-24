@@ -37,6 +37,7 @@ pub struct RemoteEmbeddingProfile {
     pub api_key: String,
     pub model: String,
     pub dimension: u64,
+    pub resolved_model_key: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -62,6 +63,7 @@ pub struct Config {
     pub llm_remote_concurrency: u64,
     pub embedding_provider: String,
     pub embedding_dimension: u64,
+    pub embedding_resolved_model_key: String,
     pub embedding_remote_profiles: Vec<RemoteEmbeddingProfile>,
     pub embedding_remote_profile_id: String,
     pub llm_remote_profiles: Vec<RemoteLlmProfile>,
@@ -108,6 +110,7 @@ impl Default for Config {
             llm_remote_concurrency: 4,
             embedding_provider: "open_ai".to_string(),
             embedding_dimension: 1_536,
+            embedding_resolved_model_key: String::new(),
             embedding_remote_profiles: Vec::new(),
             embedding_remote_profile_id: String::new(),
             llm_remote_profiles: Vec::new(),
@@ -578,6 +581,14 @@ mod tests {
             endpoint: "https://example.com/v1/embeddings".to_string(),
             api_key: "secret-api-key".to_string(),
             language: "zh".to_string(),
+            embedding_resolved_model_key: "open_ai:text-embedding-3-small:1536:key".to_string(),
+            embedding_remote_profiles: vec![RemoteEmbeddingProfile {
+                id: "remote-1".to_string(),
+                model: "text-embedding-3-small".to_string(),
+                dimension: 1_536,
+                resolved_model_key: "open_ai:text-embedding-3-small:1536:key".to_string(),
+                ..RemoteEmbeddingProfile::default()
+            }],
             ..Config::default()
         };
 

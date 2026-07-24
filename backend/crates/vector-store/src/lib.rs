@@ -184,10 +184,11 @@ impl VectorStore {
         if !vector_table_exists {
             return Ok(Some(VectorStoreStatus::default()));
         }
+        let vector_rowids_table = vector_rowids_table_name(model_id);
         let indexed_count = connection.query_row(
             &format!(
                 "SELECT COUNT(*) FROM model_vector_items i
-             JOIN {vector_table} v ON v.rowid = i.id
+             JOIN {vector_rowids_table} v ON v.rowid = i.id
              WHERE i.model_id = ?1 AND i.namespace = ?2 AND i.modality = 'image'"
             ),
             params![model_id, namespace],
@@ -390,6 +391,7 @@ impl VectorStore {
             return Ok(0);
         }
         let source_table = vector_table_name(source_id);
+        let source_rowids_table = vector_rowids_table_name(source_id);
         let source_table_exists = connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = ?1)",
             [&source_table],
@@ -405,33 +407,32 @@ impl VectorStore {
                 |row| row.get::<_, i64>(0),
             )
             .optional()?;
-        let (target_id, target_table) = if let Some(target_id) = target_id {
+        let target_id = if let Some(target_id) = target_id {
             let target_table = vector_table_name(target_id);
             let exists = connection.query_row(
                 "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = ?1)",
                 [&target_table],
                 |row| row.get::<_, bool>(0),
             )?;
-            if exists {
-                (Some(target_id), target_table)
-            } else {
-                (None, source_table.clone())
-            }
+            if exists { Some(target_id) } else { None }
         } else {
-            (None, source_table.clone())
+            None
         };
+        let target_rowids_table = target_id
+            .map(vector_rowids_table_name)
+            .unwrap_or_else(|| source_rowids_table.clone());
         Ok(connection.query_row(
             &format!(
                 "SELECT COUNT(*)
              FROM model_vector_items source
-             JOIN {source_table} source_vector ON source_vector.rowid = source.id
+             JOIN {source_rowids_table} source_vector ON source_vector.rowid = source.id
              LEFT JOIN model_vector_items target
                ON target.model_id = ?2
               AND target.namespace = source.namespace
               AND target.item_id = source.item_id
               AND target.modality = source.modality
               AND target.source_key = source.source_key
-             LEFT JOIN {target_table} target_vector ON target_vector.rowid = target.id
+             LEFT JOIN {target_rowids_table} target_vector ON target_vector.rowid = target.id
              WHERE source.model_id = ?1 AND source.namespace = ?3
                AND source.modality = 'image'
                AND (target.id IS NULL OR target_vector.rowid IS NULL OR source.updated_at > target.updated_at)"
@@ -1027,6 +1028,10 @@ fn embedding_blob(embedding: &[f32]) -> Vec<u8> {
 
 fn vector_table_name(model_id: i64) -> String {
     format!("model_vectors_{model_id}")
+}
+
+fn vector_rowids_table_name(model_id: i64) -> String {
+    format!("{}_rowids", vector_table_name(model_id))
 }
 
 fn embedding_from_blob(blob: &[u8], dimension: usize) -> Result<Vec<f32>, StoreError> {

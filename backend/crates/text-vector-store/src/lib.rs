@@ -1056,12 +1056,13 @@ fn count_embeddings_for_model(
     if !vector_table_exists {
         return Ok(0);
     }
+    let vector_rowids_table = vector_rowids_table_name(model_id);
     Ok(connection.query_row(
         &format!(
             "SELECT COUNT(*)
          FROM text_model_embeddings e
          JOIN text_documents d ON d.id = e.document_row_id
-         JOIN {vector_table} v ON v.rowid = e.id
+         JOIN {vector_rowids_table} v ON v.rowid = e.id
          WHERE e.model_id = ?1 AND d.namespace = ?2 AND d.kind = ?3
            AND e.document_revision = d.revision"
         ),
@@ -1101,6 +1102,7 @@ fn count_reusable_embeddings(
     } else {
         None
     };
+    let target_rowids_table = target_id.map(vector_rowids_table_name);
     let mut reusable = HashSet::new();
     for source_key in source_model_keys {
         let source_key = source_key.trim();
@@ -1121,6 +1123,7 @@ fn count_reusable_embeddings(
             continue;
         }
         let source_table = vector_table_name(source_id);
+        let source_rowids_table = vector_rowids_table_name(source_id);
         let source_table_exists = connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = ?1)",
             [&source_table],
@@ -1129,15 +1132,17 @@ fn count_reusable_embeddings(
         if !source_table_exists {
             continue;
         }
-        let target_table = target_table.as_deref().unwrap_or(&source_table);
+        let target_rowids_table = target_rowids_table
+            .as_deref()
+            .unwrap_or(&source_rowids_table);
         let mut statement = connection.prepare(&format!(
             "SELECT e.document_row_id
              FROM text_model_embeddings e
              JOIN text_documents d ON d.id = e.document_row_id
-             JOIN {source_table} v ON v.rowid = e.id
+             JOIN {source_rowids_table} v ON v.rowid = e.id
              LEFT JOIN text_model_embeddings target
                ON target.model_id = ?2 AND target.document_row_id = e.document_row_id
-             LEFT JOIN {target_table} target_vector ON target_vector.rowid = target.id
+             LEFT JOIN {target_rowids_table} target_vector ON target_vector.rowid = target.id
              WHERE e.model_id = ?1 AND d.namespace = ?3 AND d.kind = ?4
                AND e.document_revision = d.revision
                AND (target.id IS NULL OR target_vector.rowid IS NULL OR e.document_revision > target.document_revision)"
@@ -1400,6 +1405,10 @@ fn document_not_found(record: &TextDocumentRecord) -> StoreError {
 
 fn vector_table_name(model_id: i64) -> String {
     format!("text_vectors_{model_id}")
+}
+
+fn vector_rowids_table_name(model_id: i64) -> String {
+    format!("{}_rowids", vector_table_name(model_id))
 }
 
 fn embedding_blob(embedding: &[f32]) -> Vec<u8> {
