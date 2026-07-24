@@ -1,5 +1,6 @@
 import { shallowRef } from "vue";
 import type {
+    EmbeddingModelInfo,
     EmbeddingStatusResult,
     RemoteEmbeddingProfile,
 } from "../protocol";
@@ -30,6 +31,25 @@ export type SemanticIndexStatusSnapshot = {
 export const semanticIndexStatus = shallowRef<SemanticIndexStatusSnapshot | null>(null);
 
 const pendingRequests = new Map<string, Promise<EmbeddingStatusResult>>();
+let localModelScanRoot = "";
+let localModelScanRequest: Promise<EmbeddingModelInfo[]> | null = null;
+
+export function scanLocalEmbeddingModels(root: string, force = false) {
+    if (!root) return Promise.resolve([] as EmbeddingModelInfo[]);
+    if (!force && localModelScanRequest && localModelScanRoot === root) {
+        return localModelScanRequest;
+    }
+    localModelScanRoot = root;
+    const request = getBackendClient()
+        .scanEmbeddingModels(root)
+        .then((result) => result.models)
+        .catch((error) => {
+            if (localModelScanRequest === request) localModelScanRequest = null;
+            throw error;
+        });
+    localModelScanRequest = request;
+    return request;
+}
 
 function targetKey(target: SemanticIndexStatusTarget) {
     return [
@@ -105,8 +125,7 @@ export async function preloadSemanticIndexStatus() {
 async function resolveSemanticIndexStatusTarget(): Promise<SemanticIndexStatusTarget | null> {
     if (!config.modelLocation) return null;
 
-    const backend = getBackendClient();
-    const localModels = (await backend.scanEmbeddingModels(config.modelLocation)).models;
+    const localModels = await scanLocalEmbeddingModels(config.modelLocation);
     const profiles: RemoteEmbeddingProfile[] = config.embeddingRemoteProfiles?.length
         ? config.embeddingRemoteProfiles
         : config.embeddingModelName && config.endpoint
