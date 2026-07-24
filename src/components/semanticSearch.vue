@@ -53,7 +53,6 @@
     import { getBackendClient } from "../services/backendClient";
     import {
         fetchSemanticIndexStatus,
-        getCachedSemanticIndexStatus,
         cacheSemanticIndexStatus,
         invalidateSemanticIndexStatus,
         scanLocalEmbeddingModels,
@@ -109,6 +108,7 @@
         endpoint: string;
         apiKey: string;
         legacyModelKey: string;
+        legacyModelKeys: string[];
     };
 
     const activeTab = ref("index");
@@ -391,8 +391,9 @@
                     endpoint: "",
                     apiKey: "",
                     legacyModelKey: "",
+                    legacyModelKeys: [],
                 })),
-                ...profiles.filter((profile) => profile.model && profile.endpoint).map((profile) => { const dimension = profile.provider === "gemini" || profile.resolvedModelKey ? profile.dimension : 0; return { name: `${profile.name || profile.model} · ${profile.model}`, modelKey: profile.resolvedModelKey || remoteModelKey(profile.provider, profile.model, dimension), modelPath: "", tokenizerPath: "", dimension, provider: profile.provider, remoteModel: profile.model, selectionKey: `remote:${profile.id}`, endpoint: profile.endpoint, apiKey: profile.apiKey, legacyModelKey: profile.resolvedModelKey ? remoteModelKey(profile.provider, profile.model, 0) : endpointRemoteModelKey(profile.provider, profile.endpoint, profile.model, dimension) }; }),
+                ...profiles.filter((profile) => profile.model && profile.endpoint).map((profile) => { const dimension = profile.provider === "gemini" || profile.resolvedModelKey ? profile.dimension : 0; const legacyModelKeys = profile.resolvedModelKey ? [remoteModelKey(profile.provider, profile.model, 0), endpointRemoteModelKey(profile.provider, profile.endpoint, profile.model, 0)] : [endpointRemoteModelKey(profile.provider, profile.endpoint, profile.model, dimension)]; return { name: `${profile.name || profile.model} · ${profile.model}`, modelKey: profile.resolvedModelKey || remoteModelKey(profile.provider, profile.model, dimension), modelPath: "", tokenizerPath: "", dimension, provider: profile.provider, remoteModel: profile.model, selectionKey: `remote:${profile.id}`, endpoint: profile.endpoint, apiKey: profile.apiKey, legacyModelKey: legacyModelKeys[0] || "", legacyModelKeys }; }),
             ];
             if (
                 !models.value.some(
@@ -415,22 +416,21 @@
         }
         try {
             const namespace = await resolveLibraryNamespace();
-            const target = {
+            const targets = (model.legacyModelKeys.length ? model.legacyModelKeys : [model.legacyModelKey]).map((legacyModelKey) => ({
                 databasePath: path.join(config.modelLocation, "embedding", INDEX_FILENAME),
                 namespace,
                 modelKey: model.modelKey,
                 dimension: model.dimension,
-                legacyModelKey: model.legacyModelKey,
-            };
-            legacyMigrationTarget.value = target;
-            const cached = getCachedSemanticIndexStatus(target);
-            if (cached) {
-                applyIndexStatus(cached);
-                isIndexStatusLoading.value = false;
-                return;
+                legacyModelKey,
+            }));
+            let selectedTarget = targets[targets.length - 1];
+            for (const target of targets) {
+                const status = await fetchSemanticIndexStatus(target);
+                selectedTarget = target;
+                applyIndexStatus(status);
+                if (reusableVectorCount.value > 0) break;
             }
-            const status = await fetchSemanticIndexStatus(target);
-            applyIndexStatus(status);
+            legacyMigrationTarget.value = selectedTarget;
         } catch (error) {
             indexStatus.value = `索引状态读取失败：${errorMessage(error)}`;
             console.error("读取语义索引状态失败", error);
@@ -469,7 +469,7 @@
                 (progress) => updateTask(taskId, { detail: progress.phase, completed: progress.completed, total: progress.total }),
             );
             invalidateSemanticIndexStatus();
-            applyIndexStatus(await fetchSemanticIndexStatus(target, true));
+            await refreshIndexStatus();
             completeTask(taskId, "可复用向量迁移完成");
             notification(`迁移完成：图片 ${result.imageIndexedCount}，标签 ${result.tagIndexedCount}，注释 ${result.annotationIndexedCount}`, "success");
         } catch (error) {
@@ -539,6 +539,7 @@
                 model.modelKey = result.modelKey;
                 model.dimension = result.dimension;
                 model.legacyModelKey = requestedModelKey;
+                model.legacyModelKeys = [requestedModelKey, ...model.legacyModelKeys.filter((key) => key !== requestedModelKey)];
                 const profileId = model.selectionKey.replace(/^remote:/, "");
                 const profile = config.embeddingRemoteProfiles?.find((item) => item.id === profileId);
                 if (profile) {
@@ -569,7 +570,7 @@
                 const target = { databasePath, namespace, modelKey: model.modelKey, dimension: model.dimension, legacyModelKey: model.legacyModelKey };
                 legacyMigrationTarget.value = target;
                 invalidateSemanticIndexStatus();
-                applyIndexStatus(await fetchSemanticIndexStatus(target, true));
+                await refreshIndexStatus();
             }
         }
     }
