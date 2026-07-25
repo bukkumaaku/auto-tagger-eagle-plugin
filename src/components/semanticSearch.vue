@@ -45,6 +45,7 @@
         EmbeddingAnnotationInput,
         EmbeddingTagInput,
         EmbeddingHealthResult,
+        EmbeddingTextHealthResult,
         EmbeddingModelInfo,
         EmbeddingSearchHit,
         EmbeddingStatusResult,
@@ -178,6 +179,8 @@
     const masonryGrid = ref<HTMLElement | null>(null);
     const expandedResult = ref<SearchDisplayItem | null>(null);
     const healthResult = ref<EmbeddingHealthResult | null>(null);
+    const tagHealthResult = ref<EmbeddingTextHealthResult | null>(null);
+    const annotationHealthResult = ref<EmbeddingTextHealthResult | null>(null);
     const isCheckingHealth = ref(false);
     let searchResultObserver: IntersectionObserver | null = null;
     let masonryResizeObserver: ResizeObserver | null = null;
@@ -234,15 +237,24 @@
     const tagTotalCount = computed(() =>
         libraryCountsReady.value ? libraryTagCount.value : tagDocumentCount.value,
     );
+    const tagCurrentIndexedCount = computed(() =>
+        tagHealthResult.value?.indexedCount ?? Math.min(tagIndexedCount.value, tagTotalCount.value),
+    );
     const tagPendingCount = computed(() =>
-        Math.max(tagTotalCount.value - tagIndexedCount.value, 0),
+        Math.max(tagTotalCount.value - tagCurrentIndexedCount.value, 0),
     );
     const canIncludeTags = computed(
         () => tagIndexedCount.value > 0 && tagLinkCount.value > 0,
     );
     const canIncludeAnnotations = computed(() => annotationIndexedCount.value > 0);
     const canIncludeImages = computed(() => indexedCount.value > 0);
-    const annotationPendingCount = computed(() => Math.max(libraryAnnotationCount.value - annotationIndexedCount.value, 0));
+    const annotationTotalCount = computed(() =>
+        libraryCountsReady.value ? libraryAnnotationCount.value : annotationDocumentCount.value,
+    );
+    const annotationCurrentIndexedCount = computed(() =>
+        annotationHealthResult.value?.indexedCount ?? Math.min(annotationIndexedCount.value, annotationTotalCount.value),
+    );
+    const annotationPendingCount = computed(() => Math.max(annotationTotalCount.value - annotationCurrentIndexedCount.value, 0));
     const annotationIndexPercentage = computed(() => annotationTotalItems.value === 0 ? 0 : Number(((annotationProcessedItems.value / annotationTotalItems.value) * 100).toFixed(2)));
     const tagIndexPercentage = computed(() =>
         tagTotalItems.value === 0
@@ -664,10 +676,9 @@
             try {
                 const items = normalizeLibraryItems(await attempt.run(), attempt.name);
                 if (items.length === 0) return items;
-                const complete = items.every((item) => {
-                    if (typeof item.id !== "string" || !item.id) return false;
-                    return !IMAGE_EXTENSIONS.has(itemExtension(item)) || Boolean(item.filePath || item.thumbnailPath);
-                });
+                const complete = items.every(
+                    (item) => typeof item.id === "string" && Boolean(item.id),
+                );
                 if (complete) return items;
                 failures.push(`${attempt.name} 返回字段不完整`);
             } catch (error) {
@@ -684,11 +695,9 @@
         const items = await listLibraryItems();
         const currentItems = items.filter((item) => !item.isDeleted);
         const images = currentItems.filter(
-            (item) =>
-                IMAGE_EXTENSIONS.has(itemExtension(item)) &&
-                Boolean(item.filePath || item.thumbnailPath),
+            (item) => IMAGE_EXTENSIONS.has(itemExtension(item)),
         );
-        return { items: currentItems, images, itemIds: currentItems.map((item) => item.id) };
+        return { images, itemIds: images.map((item) => item.id) };
     }
 
     function itemExtension(item: EagleImage) {
@@ -710,6 +719,9 @@
         }
         libraryTagCount.value = tags.size;
         libraryAnnotationCount.value = images.filter((image) => String(image.annotation || "").trim()).length;
+        healthResult.value = null;
+        tagHealthResult.value = null;
+        annotationHealthResult.value = null;
         libraryCountsReady.value = true;
     }
 
@@ -746,10 +758,10 @@
     async function startAnnotationIndexing(targetItems?: EagleImage[], force = false) {
         if (isIndexing.value || isTagIndexing.value || isAnnotationIndexing.value || isSearching.value) return;
         const taskId = beginTask("embedding", "全局注释向量化"); if (!taskId) return; activeSemanticTaskId.value = taskId;
-        invalidateSemanticIndexStatus();
+        invalidateSemanticIndexStatus(); annotationHealthResult.value = null;
         isAnnotationIndexing.value = true; annotationIndexFailures.value = []; annotationIndexStatus.value = "正在加载模型";
         try {
-            await ensureSession(); const snapshot = targetItems ? null : await getLibrarySnapshot(); const images = targetItems || snapshot!.images; applyLibraryCounts(images);
+            await ensureSession(); const snapshot = targetItems ? null : await getLibrarySnapshot(); const images = targetItems || snapshot!.images; if (snapshot) applyLibraryCounts(images);
             annotationTotalItems.value = images.length; annotationProcessedItems.value = 0;
             const size = Math.max(20, batchSize.value * 4);
             for (let offset = 0; offset < images.length; offset += size) {
@@ -778,13 +790,14 @@
         const taskId = beginTask("embedding", "全局图片向量化");
         if (!taskId) return;
         invalidateSemanticIndexStatus();
+        healthResult.value = null;
         activeSemanticTaskId.value = taskId;
         try {
             updateTask(taskId, { detail: "正在加载模型" });
             await ensureSession();
             const snapshot = targetItems ? null : await getLibrarySnapshot();
             const images = targetItems || snapshot!.images;
-            applyLibraryCounts(images);
+            if (snapshot) applyLibraryCounts(images);
             if (images.length === 0) {
                 throw new Error("没有找到可索引的图片，已保留现有索引");
             }
@@ -864,7 +877,7 @@
         }
         const taskId = beginTask("embedding", "全局标签向量化");
         if (!taskId) return;
-        invalidateSemanticIndexStatus();
+        invalidateSemanticIndexStatus(); tagHealthResult.value = null;
         activeSemanticTaskId.value = taskId;
         isTagIndexing.value = true;
         tagIndexFailures.value = [];
@@ -873,7 +886,7 @@
             await ensureSession();
             const snapshot = targetItems ? null : await getLibrarySnapshot();
             const images = targetItems || snapshot!.images;
-            applyLibraryCounts(images);
+            if (snapshot) applyLibraryCounts(images);
             if (images.length === 0) throw new Error("没有找到可处理的图片");
             tagTotalItems.value = images.length;
             tagProcessedItems.value = 0;
@@ -955,6 +968,104 @@
                 };
             })
             .sort((left, right) => right.similarity - left.similarity);
+    }
+
+    function textHealthDocuments(kind: "tag" | "annotation", images: EagleImage[]) {
+        if (kind === "annotation") {
+            return images
+                .map((image) => ({
+                    documentId: image.id,
+                    content: String(image.annotation || "").trim(),
+                }))
+                .filter((document) => document.content);
+        }
+        const tags = new Set<string>();
+        for (const image of images) {
+            for (const tag of Array.isArray(image.tags) ? image.tags : []) {
+                const normalized = String(tag).trim();
+                if (normalized) tags.add(normalized);
+            }
+        }
+        return [...tags].sort().map((tag) => ({ documentId: tag, content: tag }));
+    }
+
+    async function loadTextHealth(
+        kind: "tag" | "annotation",
+        snapshot: Awaited<ReturnType<typeof getLibrarySnapshot>>,
+    ) {
+        const result = await getBackendClient().embeddingTextHealth(
+            SESSION_ID,
+            kind,
+            textHealthDocuments(kind, snapshot.images),
+        );
+        if (kind === "tag") tagHealthResult.value = result;
+        else annotationHealthResult.value = result;
+        return result;
+    }
+
+    async function checkTextIndexHealth(kind: "tag" | "annotation") {
+        if (backenAPI.is_processing) {
+            notification("另一个任务正在运行", "warning");
+            return;
+        }
+        const label = kind === "tag" ? "标签" : "注释";
+        const taskId = beginTask("embedding", `${label}索引健康检查`);
+        if (!taskId) return;
+        isCheckingHealth.value = true;
+        try {
+            updateTask(taskId, { detail: `正在比对图库${label}与索引` });
+            await ensureSession();
+            const snapshot = await getLibrarySnapshot();
+            applyLibraryCounts(snapshot.images);
+            const result = await loadTextHealth(kind, snapshot);
+            completeTask(
+                taskId,
+                `检查完成：待处理 ${result.missingDocumentIds.length}，冗余 ${result.staleDocumentIds.length}`,
+            );
+        } catch (error) {
+            failTask(taskId, error);
+            notification(errorMessage(error), "error");
+        } finally {
+            isCheckingHealth.value = false;
+        }
+    }
+
+    async function cleanStaleTextIndex(kind: "tag" | "annotation") {
+        const current = kind === "tag" ? tagHealthResult.value : annotationHealthResult.value;
+        if (!current?.staleDocumentIds.length) return;
+        const label = kind === "tag" ? "标签" : "注释";
+        const taskId = beginTask("embedding", `清理冗余${label}索引`);
+        if (!taskId) return;
+        try {
+            await ensureSession();
+            const snapshot = await getLibrarySnapshot();
+            const documentIds = textHealthDocuments(kind, snapshot.images).map(
+                (document) => document.documentId,
+            );
+            updateTask(taskId, { detail: `正在清理冗余${label}` });
+            if (kind === "tag") {
+                const result = await getBackendClient().pruneEmbeddingTags(
+                    SESSION_ID,
+                    snapshot.itemIds,
+                    documentIds,
+                );
+                tagIndexedCount.value = result.totalTags;
+                tagLinkCount.value = result.totalLinks;
+            } else {
+                const result = await getBackendClient().pruneEmbeddingAnnotations(
+                    SESSION_ID,
+                    snapshot.itemIds,
+                    documentIds,
+                );
+                annotationIndexedCount.value = result.totalAnnotations;
+            }
+            invalidateSemanticIndexStatus();
+            const result = await loadTextHealth(kind, snapshot);
+            completeTask(taskId, `清理完成，剩余冗余 ${result.staleDocumentIds.length}`);
+        } catch (error) {
+            failTask(taskId, error);
+            notification(errorMessage(error), "error");
+        }
     }
 
     async function checkIndexHealth() {
@@ -1361,12 +1472,12 @@
                 已索引 {{ indexedCount }} 张
             </n-tag>
             <n-tag
-                v-if="loadedModelKey === selectedModel && tagIndexedCount > 0"
+                v-if="loadedModelKey === selectedModel && tagCurrentIndexedCount > 0"
                 size="small"
                 :bordered="false"
                 type="success"
             >
-                已索引 {{ tagIndexedCount }} 个标签
+                已索引 {{ tagCurrentIndexedCount }} 个标签
             </n-tag>
         </header>
 
@@ -1527,7 +1638,7 @@
                         </div>
                         <div class="metric metric--green">
                             <span>已向量化</span>
-                            <strong>{{ tagIndexedCount }}</strong>
+                            <strong>{{ tagCurrentIndexedCount }}</strong>
                         </div>
                         <div class="metric">
                             <span>待向量化</span>
@@ -1572,6 +1683,14 @@
                         <span class="field-label">已建立 {{ tagLinkCount }} 条图片-标签关系</span>
                         <n-space>
                             <n-button
+                                :loading="isCheckingHealth"
+                                :disabled="!selectedModel || isIndexing || isTagIndexing || isAnnotationIndexing || isSearching"
+                                @click="checkTextIndexHealth('tag')"
+                            >
+                                <template #icon><n-icon><PulseOutline /></n-icon></template>
+                                健康检查
+                            </n-button>
+                            <n-button
                                 type="warning"
                                 secondary
                                 :disabled="!selectedModel || isIndexing || isTagIndexing || isAnnotationIndexing || isSearching"
@@ -1593,6 +1712,23 @@
                             </n-button>
                         </n-space>
                     </div>
+                    <section v-if="tagHealthResult" class="health-panel">
+                        <div class="health-metrics health-metrics--text">
+                            <div><span>库内标签</span><strong>{{ tagHealthResult.libraryCount }}</strong></div>
+                            <div><span>有效向量</span><strong>{{ tagHealthResult.indexedCount }}</strong></div>
+                            <div><span>待处理</span><strong>{{ tagHealthResult.missingDocumentIds.length }}</strong></div>
+                            <div><span>冗余</span><strong>{{ tagHealthResult.staleDocumentIds.length }}</strong></div>
+                        </div>
+                        <n-button
+                            v-if="tagHealthResult.staleDocumentIds.length"
+                            type="warning"
+                            secondary
+                            @click="cleanStaleTextIndex('tag')"
+                        >
+                            <template #icon><n-icon><TrashOutline /></n-icon></template>
+                            清理冗余标签索引
+                        </n-button>
+                    </section>
                     <n-alert
                         v-if="tagIndexFailures.length"
                         title="未能处理的标签"
@@ -1609,8 +1745,8 @@
             <n-tab-pane name="annotation-index" tab="注释向量化">
                 <section class="index-panel">
                     <div class="metrics-row">
-                        <div class="metric"><span>总注释</span><strong>{{ libraryAnnotationCount }}</strong></div>
-                        <div class="metric metric--green"><span>已向量化</span><strong>{{ annotationIndexedCount }}</strong></div>
+                        <div class="metric"><span>总注释</span><strong>{{ annotationTotalCount }}</strong></div>
+                        <div class="metric metric--green"><span>已向量化</span><strong>{{ annotationCurrentIndexedCount }}</strong></div>
                         <div class="metric"><span>待向量化</span><strong>{{ annotationPendingCount }}</strong></div>
                         <div class="metric metric--red"><span>失败</span><strong>{{ annotationIndexFailures.length }}</strong></div>
                     </div>
@@ -1637,6 +1773,14 @@
                         <span class="field-label">每张图片最多建立一条注释向量</span>
                         <n-space>
                             <n-button
+                                :loading="isCheckingHealth"
+                                :disabled="!selectedModel || isIndexing || isTagIndexing || isAnnotationIndexing || isSearching"
+                                @click="checkTextIndexHealth('annotation')"
+                            >
+                                <template #icon><n-icon><PulseOutline /></n-icon></template>
+                                健康检查
+                            </n-button>
+                            <n-button
                                 type="warning"
                                 secondary
                                 :disabled="!selectedModel || isIndexing || isTagIndexing || isAnnotationIndexing || isSearching"
@@ -1656,6 +1800,23 @@
                             </n-button>
                         </n-space>
                     </div>
+                    <section v-if="annotationHealthResult" class="health-panel">
+                        <div class="health-metrics health-metrics--text">
+                            <div><span>库内注释</span><strong>{{ annotationHealthResult.libraryCount }}</strong></div>
+                            <div><span>有效向量</span><strong>{{ annotationHealthResult.indexedCount }}</strong></div>
+                            <div><span>待处理</span><strong>{{ annotationHealthResult.missingDocumentIds.length }}</strong></div>
+                            <div><span>冗余</span><strong>{{ annotationHealthResult.staleDocumentIds.length }}</strong></div>
+                        </div>
+                        <n-button
+                            v-if="annotationHealthResult.staleDocumentIds.length"
+                            type="warning"
+                            secondary
+                            @click="cleanStaleTextIndex('annotation')"
+                        >
+                            <template #icon><n-icon><TrashOutline /></n-icon></template>
+                            清理冗余注释索引
+                        </n-button>
+                    </section>
                     <n-alert v-if="annotationIndexFailures.length" title="未能处理的注释" type="warning" class="failure-alert"><div v-for="failure in annotationIndexFailures.slice(0, 8)" :key="failure">{{ failure }}</div></n-alert>
                 </section>
             </n-tab-pane>

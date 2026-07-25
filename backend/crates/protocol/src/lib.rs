@@ -193,6 +193,8 @@ pub struct EmbeddingPruneTagsRequest {
     pub session_id: String,
     #[serde(default)]
     pub item_ids: Vec<String>,
+    #[serde(default)]
+    pub document_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -201,6 +203,8 @@ pub struct EmbeddingPruneAnnotationsRequest {
     pub session_id: String,
     #[serde(default)]
     pub item_ids: Vec<String>,
+    #[serde(default)]
+    pub document_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -210,6 +214,21 @@ pub struct EmbeddingHealthRequest {
     pub item_ids: Vec<String>,
     #[serde(default)]
     pub repair_legacy_endpoints: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmbeddingTextHealthDocumentInput {
+    pub document_id: String,
+    pub content: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmbeddingTextHealthRequest {
+    pub session_id: String,
+    pub kind: String,
+    pub documents: Vec<EmbeddingTextHealthDocumentInput>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -490,6 +509,7 @@ pub enum Command {
     EmbeddingPruneTags(EmbeddingPruneTagsRequest),
     EmbeddingPruneAnnotations(EmbeddingPruneAnnotationsRequest),
     EmbeddingHealth(EmbeddingHealthRequest),
+    EmbeddingTextHealth(EmbeddingTextHealthRequest),
     EmbeddingStatus(EmbeddingStatusRequest),
     EmbeddingMigrateText(EmbeddingMigrateTextRequest),
     EmbeddingSearchText(EmbeddingSearchTextRequest),
@@ -757,6 +777,17 @@ pub struct EmbeddingHealthResult {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct EmbeddingTextHealthResult {
+    pub session_id: String,
+    pub kind: String,
+    pub library_count: u64,
+    pub indexed_count: u64,
+    pub missing_document_ids: Vec<String>,
+    pub stale_document_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EmbeddingStatusResult {
     pub session_id: String,
     pub model_key: String,
@@ -1008,6 +1039,7 @@ pub enum ResultPayload {
     EmbeddingPruneTags(EmbeddingPruneTagsResult),
     EmbeddingPruneAnnotations(EmbeddingPruneAnnotationsResult),
     EmbeddingHealth(EmbeddingHealthResult),
+    EmbeddingTextHealth(EmbeddingTextHealthResult),
     EmbeddingStatus(EmbeddingStatusResult),
     EmbeddingMigrateText(EmbeddingMigrateTextResult),
     EmbeddingSearchText(EmbeddingSearchResult),
@@ -1400,6 +1432,33 @@ mod tests {
                 assert!(!payload.repair_legacy_endpoints);
             }
             _ => panic!("expected embedding_health command"),
+        }
+    }
+
+    #[test]
+    fn parses_embedding_text_health_request() {
+        let json = r#"{
+            "protocolVersion": 1,
+            "requestId": "text-health",
+            "type": "embedding_text_health",
+            "payload": {
+                "sessionId": "embedding-main",
+                "kind": "annotation",
+                "documents": [
+                    {"documentId": "image-1", "content": "a beach"}
+                ]
+            }
+        }"#;
+
+        let request: Request = serde_json::from_str(json).unwrap();
+        match request.command {
+            Command::EmbeddingTextHealth(payload) => {
+                assert_eq!(payload.session_id, "embedding-main");
+                assert_eq!(payload.kind, "annotation");
+                assert_eq!(payload.documents.len(), 1);
+                assert_eq!(payload.documents[0].document_id, "image-1");
+            }
+            _ => panic!("expected embedding_text_health command"),
         }
     }
 

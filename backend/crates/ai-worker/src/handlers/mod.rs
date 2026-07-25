@@ -123,6 +123,10 @@ impl CommandHandler for BuiltinHandlers {
             Command::EmbeddingHealth(request) => {
                 embedding::health(request, &self.sessions).map(ResultPayload::EmbeddingHealth)
             }
+            Command::EmbeddingTextHealth(request) => {
+                embedding::text_health(request, &self.sessions)
+                    .map(ResultPayload::EmbeddingTextHealth)
+            }
             Command::EmbeddingStatus(request) => {
                 embedding::status(request, &self.sessions).map(ResultPayload::EmbeddingStatus)
             }

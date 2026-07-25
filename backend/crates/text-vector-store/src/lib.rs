@@ -63,6 +63,13 @@ pub struct TextVectorStoreStatus {
     pub reusable_annotation_count: u64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TextDocumentHealth {
+    pub document_id: String,
+    pub content: String,
+    pub indexed: bool,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ModelCleanupResult {
     pub model_keys: Vec<String>,
@@ -941,6 +948,68 @@ impl TextVectorStore {
         Ok(true)
     }
 
+    pub fn list_document_health(
+        &self,
+        namespace: &str,
+        kind: &str,
+    ) -> Result<Vec<TextDocumentHealth>, StoreError> {
+        validate_scope(namespace, kind)?;
+        let rowids_table = format!("{}_rowids", self.vector_table);
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT d.document_id, d.content,
+                    e.document_revision = d.revision AND v.rowid IS NOT NULL
+             FROM text_documents d
+             LEFT JOIN text_model_embeddings e
+               ON e.document_row_id = d.id AND e.model_id = ?1
+             LEFT JOIN {rowids_table} v ON v.rowid = e.id
+             WHERE d.namespace = ?2 AND d.kind = ?3
+             ORDER BY d.document_id"
+        ))?;
+        Ok(statement
+            .query_map(params![self.model_id, namespace, kind], |row| {
+                Ok(TextDocumentHealth {
+                    document_id: row.get(0)?,
+                    content: row.get(1)?,
+                    indexed: row.get(2)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?)
+    }
+
+    pub fn prune_documents_except(
+        &mut self,
+        namespace: &str,
+        kind: &str,
+        keep_document_ids: &HashSet<String>,
+    ) -> Result<u64, StoreError> {
+        validate_scope(namespace, kind)?;
+        let transaction = self.connection.transaction()?;
+        let stale_row_ids = {
+            let mut statement = transaction.prepare(
+                "SELECT id, document_id FROM text_documents
+                 WHERE namespace = ?1 AND kind = ?2",
+            )?;
+            statement
+                .query_map(params![namespace, kind], |row| {
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+                })?
+                .filter_map(|row| match row {
+                    Ok((row_id, document_id)) if !keep_document_ids.contains(&document_id) => {
+                        Some(Ok(row_id))
+                    }
+                    Ok(_) => None,
+                    Err(error) => Some(Err(error)),
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        for row_id in &stale_row_ids {
+            delete_embeddings_for_document(&transaction, *row_id)?;
+            transaction.execute("DELETE FROM text_documents WHERE id = ?1", [row_id])?;
+        }
+        transaction.commit()?;
+        Ok(stale_row_ids.len() as u64)
+    }
+
     pub fn prune_unlinked_documents(
         &mut self,
         namespace: &str,
@@ -1754,6 +1823,45 @@ mod tests {
         );
         assert_eq!(store.count_documents("library-a", "tag").unwrap(), 1);
         assert_eq!(store.count_embeddings("library-a", "tag").unwrap(), 1);
+    }
+
+    #[test]
+    fn reports_text_health_and_prunes_documents_outside_the_library() {
+        let mut store = TextVectorStore::open_in_memory("text-model", 2).unwrap();
+        store
+            .upsert_many(&[
+                vector("beach", "beach", vec![1.0, 0.0]),
+                vector("stale", "stale", vec![0.0, 1.0]),
+            ])
+            .unwrap();
+        store
+            .upsert_document(&document("beach", "beach and coast"))
+            .unwrap();
+
+        assert_eq!(
+            store.list_document_health("library-a", "tag").unwrap(),
+            vec![
+                TextDocumentHealth {
+                    document_id: "beach".to_string(),
+                    content: "beach and coast".to_string(),
+                    indexed: false,
+                },
+                TextDocumentHealth {
+                    document_id: "stale".to_string(),
+                    content: "stale".to_string(),
+                    indexed: true,
+                },
+            ]
+        );
+
+        let keep = ["beach".to_string()].into_iter().collect();
+        assert_eq!(
+            store
+                .prune_documents_except("library-a", "tag", &keep)
+                .unwrap(),
+            1
+        );
+        assert_eq!(store.count_documents("library-a", "tag").unwrap(), 1);
     }
 
     #[test]

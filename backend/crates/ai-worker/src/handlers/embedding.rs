@@ -22,8 +22,9 @@ use protocol::{
     EmbeddingPruneAnnotationsResult, EmbeddingPruneRequest, EmbeddingPruneResult,
     EmbeddingPruneTagsRequest, EmbeddingPruneTagsResult, EmbeddingSearchHit,
     EmbeddingSearchImageRequest, EmbeddingSearchResult, EmbeddingSearchTextRequest,
-    EmbeddingStatusRequest, EmbeddingStatusResult, EmbeddingTagFailure,
-    EmbeddingTextMigrationProgress, EmbeddingUnloadRequest, EmbeddingUnloadResult, ProgressPayload,
+    EmbeddingStatusRequest, EmbeddingStatusResult, EmbeddingTagFailure, EmbeddingTextHealthRequest,
+    EmbeddingTextHealthResult, EmbeddingTextMigrationProgress, EmbeddingUnloadRequest,
+    EmbeddingUnloadResult, ProgressPayload,
 };
 use serde_json::json;
 use text_vector_store::{TextDocumentRecord, TextVectorRecord, TextVectorStore};
@@ -412,10 +413,21 @@ pub fn prune_tags(
             .prune_item_links(&namespace, "tag", &keep_item_ids)
             .map_err(store_error)?;
     }
-    let removed_tags = session
-        .tag_store
-        .prune_unlinked_documents(&namespace, "tag")
-        .map_err(store_error)?;
+    let removed_tags = if let Some(document_ids) = request.document_ids {
+        let keep_document_ids = document_ids
+            .into_iter()
+            .filter(|document_id| !document_id.trim().is_empty())
+            .collect::<HashSet<_>>();
+        session
+            .tag_store
+            .prune_documents_except(&namespace, "tag", &keep_document_ids)
+            .map_err(store_error)?
+    } else {
+        session
+            .tag_store
+            .prune_unlinked_documents(&namespace, "tag")
+            .map_err(store_error)?
+    };
     Ok(EmbeddingPruneTagsResult {
         session_id,
         removed_tags,
@@ -542,10 +554,21 @@ pub fn prune_annotations(
             .prune_item_links(&namespace, "annotation", &keep)
             .map_err(store_error)?;
     }
-    let removed_annotations = session
-        .annotation_store
-        .prune_unlinked_documents(&namespace, "annotation")
-        .map_err(store_error)?;
+    let removed_annotations = if let Some(document_ids) = request.document_ids {
+        let keep_document_ids = document_ids
+            .into_iter()
+            .filter(|document_id| !document_id.trim().is_empty())
+            .collect::<HashSet<_>>();
+        session
+            .annotation_store
+            .prune_documents_except(&namespace, "annotation", &keep_document_ids)
+            .map_err(store_error)?
+    } else {
+        session
+            .annotation_store
+            .prune_unlinked_documents(&namespace, "annotation")
+            .map_err(store_error)?
+    };
     Ok(EmbeddingPruneAnnotationsResult {
         session_id: request.session_id,
         removed_annotations,
@@ -686,6 +709,70 @@ pub fn health(
         removed_legacy_model_keys,
         removed_legacy_table_count,
         removed_legacy_vector_count,
+    })
+}
+
+pub fn text_health(
+    request: EmbeddingTextHealthRequest,
+    sessions: &SessionManager,
+) -> HandlerResult<EmbeddingTextHealthResult> {
+    validate_session_id(&request.session_id)?;
+    let kind = request.kind.trim();
+    if kind != "tag" && kind != "annotation" {
+        return Err(HandlerError::new(
+            "EMBEDDING_TEXT_HEALTH_KIND",
+            "kind must be tag or annotation",
+        ));
+    }
+    let expected = request
+        .documents
+        .into_iter()
+        .filter_map(|document| {
+            let document_id = document.document_id.trim().to_string();
+            let content = document.content.trim().to_string();
+            (!document_id.is_empty() && !content.is_empty()).then_some((document_id, content))
+        })
+        .collect::<HashMap<_, _>>();
+    let handle = embedding_session(sessions, &request.session_id)?;
+    let session = handle.lock().map_err(session_error)?;
+    let stored = if kind == "tag" {
+        session
+            .tag_store
+            .list_document_health(&session.settings.namespace, kind)
+    } else {
+        session
+            .annotation_store
+            .list_document_health(&session.settings.namespace, kind)
+    }
+    .map_err(store_error)?;
+    let stored_by_id = stored
+        .iter()
+        .map(|document| (document.document_id.as_str(), document))
+        .collect::<HashMap<_, _>>();
+    let mut indexed_count = 0_u64;
+    let mut missing_document_ids = Vec::new();
+    for (document_id, content) in &expected {
+        match stored_by_id.get(document_id.as_str()) {
+            Some(document) if document.content == *content && document.indexed => {
+                indexed_count += 1;
+            }
+            _ => missing_document_ids.push(document_id.clone()),
+        }
+    }
+    let mut stale_document_ids = stored
+        .iter()
+        .filter(|document| !expected.contains_key(&document.document_id))
+        .map(|document| document.document_id.clone())
+        .collect::<Vec<_>>();
+    missing_document_ids.sort();
+    stale_document_ids.sort();
+    Ok(EmbeddingTextHealthResult {
+        session_id: request.session_id,
+        kind: kind.to_string(),
+        library_count: expected.len() as u64,
+        indexed_count,
+        missing_document_ids,
+        stale_document_ids,
     })
 }
 

@@ -39,6 +39,8 @@ import {
     type EmbeddingIndexTagsResult,
     type EmbeddingPruneTagsResult,
     type EmbeddingHealthResult,
+    type EmbeddingTextHealthDocumentInput,
+    type EmbeddingTextHealthResult,
     type EmbeddingPruneResult,
     type EmbeddingLoadResult,
     type EmbeddingModelInfo,
@@ -246,10 +248,10 @@ export class BackendClient {
     }
     indexEmbeddingAnnotations(sessionId: string, items: import("../protocol").EmbeddingAnnotationInput[], concurrency: number, force = false): Promise<import("../protocol").EmbeddingIndexAnnotationsResult> { return this.request("embedding_index_annotations", { sessionId, items, concurrency, force }); }
 
-    pruneEmbeddingTags(sessionId: string, itemIds: string[]): Promise<EmbeddingPruneTagsResult> {
-        return this.request("embedding_prune_tags", { sessionId, itemIds });
+    pruneEmbeddingTags(sessionId: string, itemIds: string[], documentIds?: string[]): Promise<EmbeddingPruneTagsResult> {
+        return this.request("embedding_prune_tags", { sessionId, itemIds, documentIds });
     }
-    pruneEmbeddingAnnotations(sessionId: string, itemIds: string[]): Promise<import("../protocol").EmbeddingPruneAnnotationsResult> { return this.request("embedding_prune_annotations", { sessionId, itemIds }); }
+    pruneEmbeddingAnnotations(sessionId: string, itemIds: string[], documentIds?: string[]): Promise<import("../protocol").EmbeddingPruneAnnotationsResult> { return this.request("embedding_prune_annotations", { sessionId, itemIds, documentIds }); }
 
     pruneEmbedding(
         sessionId: string,
@@ -264,6 +266,14 @@ export class BackendClient {
         repairLegacyEndpoints = false,
     ): Promise<EmbeddingHealthResult> {
         return this.request("embedding_health", { sessionId, itemIds, repairLegacyEndpoints });
+    }
+
+    embeddingTextHealth(
+        sessionId: string,
+        kind: "tag" | "annotation",
+        documents: EmbeddingTextHealthDocumentInput[],
+    ): Promise<EmbeddingTextHealthResult> {
+        return this.request("embedding_text_health", { sessionId, kind, documents });
     }
 
     embeddingStatus(
