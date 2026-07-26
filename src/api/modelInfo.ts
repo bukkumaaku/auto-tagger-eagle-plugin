@@ -241,6 +241,30 @@ export const llmModelInfo = [
             },
         ],
     },
+    {
+        label: "Llama-JoyCaption-Alpha-Two-8B-Q6_K",
+        value: "Llama-JoyCaption-Alpha-Two-8B-Q6_K",
+        type: "llm",
+        downloadInfo: [
+            {
+                name: "Llama-JoyCaption-Alpha-Two-8B-Q6_K",
+                filename: "llama-joycaption-alpha-two-llava-Q6_K.gguf",
+                url: "https://huggingface.co/Jobaar/Llama-JoyCaption-Alpha-Two-GGUF/resolve/main/llama-joycaption-alpha-two-llava-Q6_K.gguf",
+                get dest() {
+                    return getTypedModelPath(this.name, this.filename, "llm");
+                },
+            },
+            {
+                name: "Llama-JoyCaption-Alpha-Two-8B-Q6_K",
+                filename:
+                    "llama-joycaption-alpha-two-llava-mmproj-model-f16.gguf",
+                url: "https://huggingface.co/Jobaar/Llama-JoyCaption-Alpha-Two-GGUF/resolve/main/llama-joycaption-alpha-two-llava-mmproj-model-f16.gguf",
+                get dest() {
+                    return getTypedModelPath(this.name, this.filename, "llm");
+                },
+            },
+        ],
+    },
 ];
 
 export const embeddingModelInfo = [

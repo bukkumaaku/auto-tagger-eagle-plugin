@@ -366,10 +366,10 @@ import {
             })),
         );
         const modelFile = files.find(
-            (file) => !file.filename.toLowerCase().startsWith("mmproj"),
+            (file) => !file.filename.toLowerCase().includes("mmproj"),
         );
         const mmprojFile = files.find((file) =>
-            file.filename.toLowerCase().startsWith("mmproj"),
+            file.filename.toLowerCase().includes("mmproj"),
         );
         const runner = llmModelInfo.find((item) => item.runnerOnly);
         const defaultRunnerPath = runner?.downloadInfo[0]
