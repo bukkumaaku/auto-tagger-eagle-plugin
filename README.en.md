@@ -101,7 +101,7 @@ model-root/
 │       ├── tokenizer.json
 │       └── other model configuration files
 └── llamafile/
-    └── llamafile-0.10.3.exe
+    └── llamafile-0.10.4.exe
 ```
 
 ### WD models

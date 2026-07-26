@@ -101,7 +101,7 @@ WD 和本地 embedding 模型的执行后端由 Rust 负责：Windows 优先使�
 │       ├── tokenizer.json
 │       └── 其他模型配置文件
 └── llamafile/
-    └── llamafile-0.10.3.exe
+    └── llamafile-0.10.4.exe
 ```
 
 ### WD 模型

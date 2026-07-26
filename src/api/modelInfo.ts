@@ -155,15 +155,15 @@ export const wdModelInfo = [
 
 export const llmModelInfo = [
     {
-        label: "llamafile 0.10.3 runner",
-        value: "llamafile-0.10.3",
+        label: "llamafile 0.10.4 runner",
+        value: "llamafile-0.10.4",
         type: "llm",
         runnerOnly: true,
         downloadInfo: [
             {
                 name: "llamafile",
-                filename: "llamafile-0.10.3.exe",
-                url: "https://github.com/mozilla-ai/llamafile/releases/download/0.10.3/llamafile-0.10.3",
+                filename: "llamafile-0.10.4.exe",
+                url: "https://github.com/mozilla-ai/llamafile/releases/download/0.10.4/llamafile-0.10.4",
                 get dest() {
                     return llamafilePath(this.filename);
                 },
