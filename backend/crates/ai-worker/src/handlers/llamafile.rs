@@ -39,7 +39,7 @@ pub fn load(
         .map_err(session_error)?
     {
         let session = handle.lock().map_err(session_error)?;
-        if session.config() != &config {
+        if !same_session_config(session.config(), &config) {
             return Err(HandlerError::new(
                 "LLAMAFILE_SESSION_CONFIG_MISMATCH",
                 format!(
@@ -151,6 +151,12 @@ fn build_config(request: LlamafileLoadRequest) -> LlamafileConfig {
     config
 }
 
+fn same_session_config(existing: &LlamafileConfig, requested: &LlamafileConfig) -> bool {
+    let mut requested = requested.clone();
+    requested.log_path.clone_from(&existing.log_path);
+    existing == &requested
+}
+
 fn session_key(session_id: &str) -> String {
     format!("llamafile:{session_id}")
 }
@@ -200,6 +206,18 @@ fn llamafile_error(error: LlamafileError) -> HandlerError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_config_ignores_log_path_changes() {
+        let mut existing = LlamafileConfig::new("llamafile", "model", "mmproj");
+        existing.log_path = Some("logs/2026-07-26.log".into());
+        let mut requested = existing.clone();
+        requested.log_path = Some("logs/2026-07-27.log".into());
+
+        assert!(same_session_config(&existing, &requested));
+        requested.model_path = "other-model".into();
+        assert!(!same_session_config(&existing, &requested));
+    }
 
     #[test]
     fn rejects_missing_llamafile_before_creating_session() {
