@@ -17,7 +17,6 @@ export default defineConfig(({ command }) => ({
                 { src: "manifest.json", dest: "" },
                 { src: "logo.png", dest: "" },
                 { src: "package.json", dest: "" },
-                { src: "_locales", dest: "" },
                 { src: "tagset.csv", dest: "" },
                 { src: "bin", dest: "" },
             ],

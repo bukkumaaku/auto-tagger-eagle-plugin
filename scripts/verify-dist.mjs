@@ -42,6 +42,26 @@ if (
     );
 }
 
+if (!Array.isArray(manifest?.languages) || manifest.languages.length === 0) {
+    throw new Error("dist manifest must declare at least one language");
+}
+if (!manifest.languages.includes(manifest.fallbackLanguage)) {
+    throw new Error(
+        `fallback language is not declared: ${manifest.fallbackLanguage}`,
+    );
+}
+for (const language of manifest.languages) {
+    const relativePath = path.join("_locales", `${language}.json`);
+    const localePath = path.join(distDirectory, relativePath);
+    const localeFile = await stat(localePath).catch(() => null);
+    if (!localeFile?.isFile() || localeFile.size === 0) {
+        throw new Error(
+            `required locale artifact is missing or empty: ${localePath}`,
+        );
+    }
+    JSON.parse(await readFile(localePath, "utf8"));
+}
+
 const packagePath = path.join(distDirectory, "package.json");
 const packageManifest = JSON.parse(await readFile(packagePath, "utf8"));
 const runtimeDependencies = Object.keys(packageManifest.dependencies ?? {});
