@@ -93,7 +93,7 @@ mod tests {
     #[test]
     fn normalizes_release_tags() {
         assert_eq!(normalize_version("v2.0.1"), Some("2.0.1".to_string()));
-        assert_eq!(normalize_version("V2.1.0-beta"), Some("2.1.0".to_string()));
+        assert_eq!(normalize_version("V2.2.0-beta"), Some("2.2.0".to_string()));
         assert_eq!(normalize_version("release"), None);
     }
 

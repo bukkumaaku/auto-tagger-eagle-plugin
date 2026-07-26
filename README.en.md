@@ -2,9 +2,9 @@
 
 English | [简体中文](./README.md)
 
-Eagle Auto Tagger is an Eagle plugin with a Rust backend and Vue interface. It provides image tagging, video tagging, vision-language model processing, and semantic image search.
+Eagle Auto Tagger is an Eagle plugin with a Rust backend and Vue interface. It provides image and video tagging, vision-language tag and annotation generation, one-click workflows, and combined semantic search over images, tags, and annotations.
 
-Current version: `2.1.0`
+Current version: `2.2.0`
 
 ## Features
 
@@ -21,12 +21,14 @@ Current version: `2.1.0`
 
 ### LLM image understanding
 
-- Uses a local llamafile and GGUF vision-language model to process one image at a time.
+- Supports local llamafile + GGUF vision-language models and remote OpenAI-compatible or native Gemini REST vision models.
+- Stores multiple remote LLM profiles and supports configurable concurrency for remote batches.
 - Can generate tags or write an annotation to Eagle.
 - Tagging and annotation prompts can be edited in the interface and are saved separately.
 - Provides controls to restore the default prompts.
 - Supports skip, overwrite, and merge modes for existing tags or annotations.
-- The current model list includes Qwen3.5-9B and Qwen3-VL models. Each model requires both the GGUF main model and its mmproj file.
+- Built-in local models include Qwen3.5-9B, Qwen3-VL 8B, and Llama JoyCaption Alpha Two 8B. Each model requires its GGUF main model and mmproj file.
+- llamafile stdout and stderr are written by date to `model-root/logs/YYYY-MM-DD.log`.
 
 ### Semantic image search
 
@@ -37,8 +39,17 @@ Current version: `2.1.0`
 - Click a result to preview it and double-click to open it in Eagle.
 - Supports a local Jina CLIP v2 model.
 - Supports OpenAI Compatible and native Gemini REST remote embedding services.
+- Stores multiple remote embedding profiles.
+- Indexes images, tags, and annotations separately and combines them with configurable weights.
+- Supports positive and negative text conditions combined with image similarity.
 - Different models, protocols, and vector dimensions use separate SQLite vector tables so incompatible vector spaces are never mixed.
-- Provides index health checks, stale-item cleanup, and a list of failed items.
+- Provides index health checks, rebuild recovery, stale-item cleanup, and a list of failed items.
+
+### One-click workflows and backups
+
+- Runs WD tagging, LLM tagging, LLM annotation, and image/tag/annotation vectorization as one configurable workflow.
+- Supports pausing, resuming, and cancelling long tasks with stage progress and failure reporting.
+- Creates categorized tag or annotation backups before batch writes and allows restoring a selected backup.
 
 ### Tasks and configuration
 
@@ -47,7 +58,8 @@ Current version: `2.1.0`
 - On startup, the plugin checks GitHub Releases and can open the Release download page when a newer version is available.
 - Configuration is read and written by the Rust backend. The default file is `.eagle-auto-tagger/config.json5` under the current user's home directory.
 - Newly added configuration keys are written to JSON5 with their default values.
-- Remote embedding API keys are protected by the operating system credential store and are not written to JSON5 in plain text.
+- Remote embedding and LLM profile API keys are protected by the operating system credential store and are not written to JSON5 in plain text.
+- Configuration writes use an atomic same-directory replacement so an interrupted write cannot leave partial JSON5.
 
 ## Supported platforms
 
@@ -59,10 +71,10 @@ WD and local embedding inference are handled by Rust: Windows tries DirectML fir
 
 ## Installation
 
-Download the `.eagleplugin` file for your platform from GitHub Releases. The 2.1.0 files are:
+Download the `.eagleplugin` file for your platform from GitHub Releases. The 2.2.0 files are:
 
-- Windows x64: `auto-tagger-eagle-plugin-v2.1.0-win-x64.eagleplugin`
-- macOS ARM64: `auto-tagger-eagle-plugin-v2.1.0-mac-arm64.eagleplugin`
+- Windows x64: `auto-tagger-eagle-plugin-v2.2.0-win-x64.eagleplugin`
+- macOS ARM64: `auto-tagger-eagle-plugin-v2.2.0-mac-arm64.eagleplugin`
 
 Open Eagle, drag the `.eagleplugin` file into the application, and confirm the installation.
 
@@ -109,7 +121,9 @@ WD models must be placed under `model-root/wd/model-name/` with the model files 
 The built-in download list currently includes:
 
 - `Qwen3.5-9B-Q4_K_M`
+- `Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q4_K_M`
 - `Qwen3VL-8B-Instruct-Q4_K_M`
+- `Llama-JoyCaption-Alpha-Two-8B-Q6_K`
 
 Each model belongs under `model-root/llm/model-name/` and requires a GGUF main model plus its corresponding `mmproj` file. The llamafile runner belongs under `model-root/llamafile/` and can be downloaded from Settings.
 
@@ -133,7 +147,8 @@ Vectors from different models, protocols, or dimensions cannot be compared. The 
 3. In WD Tagger, select images, a model, label language, threshold, and overwrite mode, then start tagging.
 4. In LLM Image Understanding, select a model and operation, review the prompt, and process the image.
 5. In Semantic Search, select an embedding model, build an image index, and then search by text or image.
-6. Use the task center to monitor active tasks, progress, and failures.
+6. Use One-click Workflow to combine tagging, annotation, and all three vector indexes as needed.
+7. Use the task center to monitor progress and failures, and restore categorized backups when required.
 
 Reading video content requires ffmpeg provided by the Eagle plugin center. When video content reading is disabled, the plugin does not extract frames from videos.
 
@@ -171,7 +186,7 @@ cargo test --manifest-path backend/Cargo.toml --workspace
 cargo clippy --manifest-path backend/Cargo.toml --workspace --all-targets -- -D warnings
 ```
 
-GitHub Actions builds Windows x64 and macOS ARM64 when `main` is pushed. Pushing a version-matching `v2.1.0` tag also creates a Release.
+GitHub Actions builds Windows x64 and macOS ARM64 when `main` is pushed. Pushing a version-matching `v2.2.0` tag also creates a Release.
 
 ## Project structure
 

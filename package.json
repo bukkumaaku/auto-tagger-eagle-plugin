@@ -1,7 +1,7 @@
 {
     "name": "eagle-ai-plugin",
     "private": true,
-    "version": "2.1.0",
+    "version": "2.2.0",
     "type": "module",
     "scripts": {
         "postinstall": "bun run worker:debug",
