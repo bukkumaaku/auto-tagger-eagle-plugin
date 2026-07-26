@@ -27,7 +27,7 @@ Eagle Auto Tagger 是一个使用 Rust 后端和 Vue 界面的 Eagle 插件，�
 - 标签提示词和注释提示词可以在界面中修改，并分别自动保存。
 - 提供恢复默认提示词功能。
 - 支持不覆写、覆写和合并已有标签或注释。
-- 当前本地模型包括 Qwen3.5-9B、Qwen3-VL 8B 和 Llama JoyCaption Alpha Two 8B；模型需要同时具备 GGUF 主模型和 mmproj 文件。
+- 当前本地模型包括 Qwen3.5-9B、Qwen3-VL 8B、Llama JoyCaption Alpha Two 8B 和 Beta One 8B；模型需要同时具备 GGUF 主模型和 mmproj 文件。
 - llamafile 的标准输出和错误输出按日期写入 `模型根目录/logs/YYYY-MM-DD.log`。
 - 本地 LLM 支持自动检测 CUDA、Metal 和 Vulkan；后端不可用时可显示明确诊断并按设置回退到 Vulkan 或 CPU。
 
@@ -125,6 +125,7 @@ WD 模型必须放在 `模型根目录/wd/模型名/` 下，并包含对应格�
 - `Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q4_K_M`
 - `Qwen3VL-8B-Instruct-Q4_K_M`
 - `Llama-JoyCaption-Alpha-Two-8B-Q6_K`
+- `Llama-JoyCaption-Beta-One-8B-Q4_K_M`
 
 每个模型需要放在 `模型根目录/llm/模型名/` 下，并准备 GGUF 主模型和对应的 `mmproj` 文件。llamafile 运行程序放在 `模型根目录/llamafile/` 下，插件可以从设置页面下载。
 

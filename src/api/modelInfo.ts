@@ -265,6 +265,30 @@ export const llmModelInfo = [
             },
         ],
     },
+    {
+        label: "Llama-JoyCaption-Beta-One-8B-Q4_K_M",
+        value: "Llama-JoyCaption-Beta-One-8B-Q4_K_M",
+        type: "llm",
+        downloadInfo: [
+            {
+                name: "Llama-JoyCaption-Beta-One-8B-Q4_K_M",
+                filename: "llama-joycaption-beta-one-hf-llava.Q4_K_M.gguf",
+                url: "https://huggingface.co/mradermacher/llama-joycaption-beta-one-hf-llava-GGUF/resolve/main/llama-joycaption-beta-one-hf-llava.Q4_K_M.gguf",
+                get dest() {
+                    return getTypedModelPath(this.name, this.filename, "llm");
+                },
+            },
+            {
+                name: "Llama-JoyCaption-Beta-One-8B-Q4_K_M",
+                filename:
+                    "llama-joycaption-beta-one-llava-mmproj-model-f16.gguf",
+                url: "https://huggingface.co/concedo/llama-joycaption-beta-one-hf-llava-mmproj-gguf/resolve/main/llama-joycaption-beta-one-llava-mmproj-model-f16.gguf",
+                get dest() {
+                    return getTypedModelPath(this.name, this.filename, "llm");
+                },
+            },
+        ],
+    },
 ];
 
 export const embeddingModelInfo = [

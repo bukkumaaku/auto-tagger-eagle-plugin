@@ -27,7 +27,7 @@ Current version: `2.2.1`
 - Tagging and annotation prompts can be edited in the interface and are saved separately.
 - Provides controls to restore the default prompts.
 - Supports skip, overwrite, and merge modes for existing tags or annotations.
-- Built-in local models include Qwen3.5-9B, Qwen3-VL 8B, and Llama JoyCaption Alpha Two 8B. Each model requires its GGUF main model and mmproj file.
+- Built-in local models include Qwen3.5-9B, Qwen3-VL 8B, Llama JoyCaption Alpha Two 8B, and Llama JoyCaption Beta One 8B. Each model requires its GGUF main model and mmproj file.
 - llamafile stdout and stderr are written by date to `model-root/logs/YYYY-MM-DD.log`.
 - Local LLM startup can auto-detect CUDA, Metal, and Vulkan, report unavailable backends clearly, and optionally fall back to Vulkan or CPU.
 
@@ -125,6 +125,7 @@ The built-in download list currently includes:
 - `Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q4_K_M`
 - `Qwen3VL-8B-Instruct-Q4_K_M`
 - `Llama-JoyCaption-Alpha-Two-8B-Q6_K`
+- `Llama-JoyCaption-Beta-One-8B-Q4_K_M`
 
 Each model belongs under `model-root/llm/model-name/` and requires a GGUF main model plus its corresponding `mmproj` file. The llamafile runner belongs under `model-root/llamafile/` and can be downloaded from Settings.
 
