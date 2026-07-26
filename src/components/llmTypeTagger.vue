@@ -437,7 +437,7 @@ import {
             String(now.getMonth() + 1).padStart(2, "0"),
             String(now.getDate()).padStart(2, "0"),
         ].join("-");
-        await backend.loadLlamafile({
+        const result = await backend.loadLlamafile({
             sessionId: LLAMAFILE_SESSION_ID,
             ...paths,
             logPath: path.join(config.modelLocation, "logs", `${logDate}.log`),
@@ -445,9 +445,35 @@ import {
             contextSize: Number(config.llmContextSize) || 8192,
             gpu: config.llmUseVulkan
                 ? "vulkan"
-                : config.llmGpu || "nvidia",
+                : config.llmGpu || "auto",
             gpuLayers: Number.isFinite(gpuLayers) ? gpuLayers : 9999,
+            allowGpuFallback: config.llmAllowGpuFallback !== false,
         });
+        if (!result.reused) {
+            const backendName = ({
+                nvidia: "NVIDIA CUDA",
+                apple: "Apple Metal",
+                vulkan: "Vulkan",
+                amd: "AMD ROCm",
+                cpu: "CPU",
+                auto: t.value("settings.llm_gpu_auto"),
+            } as Record<string, string>)[result.activeGpu] || result.activeGpu;
+            if (result.fallbackReason) {
+                notification(
+                    t.value("llm_tagger.gpu_fallback_notice")
+                        .replace("{{backend}}", backendName)
+                        .replace("{{reason}}", result.fallbackReason),
+                    "warning",
+                );
+            } else if (result.activeGpu === "cpu") {
+                notification(t.value("llm_tagger.gpu_cpu_notice"), "warning");
+            } else {
+                notification(
+                    t.value("llm_tagger.gpu_backend_detected")
+                        .replace("{{backend}}", backendName),
+                );
+            }
+        }
         loadedModel = formData.value.model;
     };
 

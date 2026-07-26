@@ -8,6 +8,7 @@
         NInputNumber,
         NSelect,
         NDivider,
+        NSwitch,
     } from "naive-ui";
     import { CloudDownloadOutline } from "@vicons/ionicons5";
     import { onBeforeUnmount, onMounted, ref, watch, type Ref } from "vue";
@@ -20,6 +21,8 @@
     type SettingsFormData = {
         modelLocation: string;
         llmRunnerPath: string;
+        llmGpu: string;
+        llmAllowGpuFallback: boolean;
         endpoint: string;
         apiKey: string;
         embeddingModelName: string;
@@ -33,6 +36,8 @@
     const defaultFormData: SettingsFormData = {
         modelLocation: "",
         llmRunnerPath: "",
+        llmGpu: "auto",
+        llmAllowGpuFallback: true,
         endpoint: "",
         apiKey: "",
         embeddingModelName: "",
@@ -174,6 +179,7 @@
         Object.entries(cloneFormData(formData.value)).forEach(([key, value]) => {
             config[key] = value;
         });
+        config.llmUseVulkan = false;
         if (
             config.llmProvider !== "local" &&
             !formData.value.llmRemoteProfiles.some(
@@ -331,6 +337,25 @@
                 </template>
                 {{ t("settings.download_llamafile") }}
             </n-button>
+        </n-form-item>
+
+        <n-form-item :label="t('settings.llm_gpu_backend')" path="llmGpu">
+            <FormHelp :content="t('settings.llm_gpu_backend_desc')" />
+            <n-select
+                v-model:value="formData.llmGpu"
+                :options="[
+                    { label: t('settings.llm_gpu_auto'), value: 'auto' },
+                    { label: 'NVIDIA CUDA', value: 'nvidia' },
+                    { label: 'Apple Metal', value: 'apple' },
+                    { label: 'Vulkan', value: 'vulkan' },
+                    { label: 'CPU', value: 'disabled' },
+                ]"
+            />
+        </n-form-item>
+
+        <n-form-item :label="t('settings.llm_gpu_fallback')" path="llmAllowGpuFallback">
+            <FormHelp :content="t('settings.llm_gpu_fallback_desc')" />
+            <n-switch v-model:value="formData.llmAllowGpuFallback" />
         </n-form-item>
 
         <n-divider title-placement="left">

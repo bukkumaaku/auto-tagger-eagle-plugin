@@ -97,6 +97,7 @@ pub struct Config {
     pub llm_ngl: String,
     pub llm_gpu: String,
     pub llm_use_vulkan: bool,
+    pub llm_allow_gpu_fallback: bool,
     pub llm_temperature: f64,
     pub llm_max_tokens: u64,
     pub llm_overwrite: String,
@@ -141,8 +142,9 @@ impl Default for Config {
             llm_runner_path: String::new(),
             llm_context_size: 8192,
             llm_ngl: "9999".to_string(),
-            llm_gpu: "nvidia".to_string(),
+            llm_gpu: "auto".to_string(),
             llm_use_vulkan: false,
+            llm_allow_gpu_fallback: true,
             llm_temperature: 0.5,
             llm_max_tokens: 1024,
             llm_overwrite: "merge".to_string(),
@@ -160,6 +162,11 @@ impl Default for Config {
 
 impl Config {
     fn normalize(&mut self) {
+        if self.llm_use_vulkan {
+            self.llm_gpu = "vulkan".to_string();
+        } else if self.llm_gpu.trim().is_empty() {
+            self.llm_gpu = "auto".to_string();
+        }
         self.negative_prompt_weight = if self.negative_prompt_weight.is_finite() {
             self.negative_prompt_weight.clamp(0.0, 1.0)
         } else {
@@ -717,6 +724,8 @@ mod tests {
         assert_eq!(config.read_video, "noread");
         assert_eq!(config.overwrite, "merge");
         assert_eq!(config.splitter, "|");
+        assert_eq!(config.llm_gpu, "auto");
+        assert!(config.llm_allow_gpu_fallback);
         assert_eq!(config.llm_tagger_prompt, DEFAULT_LLM_TAG_PROMPT);
         assert_eq!(config.llm_annotation_prompt, DEFAULT_LLM_ANNOTATION_PROMPT);
         assert_eq!(config.llm_remote_concurrency, 4);

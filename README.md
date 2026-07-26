@@ -29,6 +29,7 @@ Eagle Auto Tagger 是一个使用 Rust 后端和 Vue 界面的 Eagle 插件，�
 - 支持不覆写、覆写和合并已有标签或注释。
 - 当前本地模型包括 Qwen3.5-9B、Qwen3-VL 8B 和 Llama JoyCaption Alpha Two 8B；模型需要同时具备 GGUF 主模型和 mmproj 文件。
 - llamafile 的标准输出和错误输出按日期写入 `模型根目录/logs/YYYY-MM-DD.log`。
+- 本地 LLM 支持自动检测 CUDA、Metal 和 Vulkan；后端不可用时可显示明确诊断并按设置回退到 Vulkan 或 CPU。
 
 ### 图片语义搜索
 

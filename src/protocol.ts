@@ -45,6 +45,7 @@ export type Config = {
     llmNGL: string;
     llmGpu: string;
     llmUseVulkan: boolean;
+    llmAllowGpuFallback: boolean;
     llmTemperature: number;
     llmMaxTokens: number;
     llmOverwrite: string;
@@ -255,6 +256,7 @@ export type LlamafileLoadRequest = {
     contextSize?: number;
     gpu?: string;
     gpuLayers?: number;
+    allowGpuFallback?: boolean;
     startupTimeoutMilliseconds?: number;
     requestTimeoutMilliseconds?: number;
 };
@@ -576,6 +578,8 @@ export type LlamafileLoadResult = {
     sessionId: string;
     port: number;
     reused: boolean;
+    activeGpu: string;
+    fallbackReason: string;
 };
 
 export type LlamafileProcessImageResult = {

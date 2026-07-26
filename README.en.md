@@ -29,6 +29,7 @@ Current version: `2.2.0`
 - Supports skip, overwrite, and merge modes for existing tags or annotations.
 - Built-in local models include Qwen3.5-9B, Qwen3-VL 8B, and Llama JoyCaption Alpha Two 8B. Each model requires its GGUF main model and mmproj file.
 - llamafile stdout and stderr are written by date to `model-root/logs/YYYY-MM-DD.log`.
+- Local LLM startup can auto-detect CUDA, Metal, and Vulkan, report unavailable backends clearly, and optionally fall back to Vulkan or CPU.
 
 ### Semantic image search
 

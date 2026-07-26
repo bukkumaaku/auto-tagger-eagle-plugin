@@ -51,6 +51,8 @@ pub fn load(
             session_id,
             port: session.port(),
             reused: true,
+            active_gpu: session.active_gpu().to_string(),
+            fallback_reason: session.fallback_reason().unwrap_or_default().to_string(),
         });
     }
 
@@ -64,6 +66,8 @@ pub fn load(
         session_id,
         port: session.port(),
         reused: false,
+        active_gpu: session.active_gpu().to_string(),
+        fallback_reason: session.fallback_reason().unwrap_or_default().to_string(),
     })
 }
 
@@ -138,6 +142,7 @@ fn build_config(request: LlamafileLoadRequest) -> LlamafileConfig {
     config.context_size = request.context_size.unwrap_or(DEFAULT_CONTEXT_SIZE);
     config.gpu = (!request.gpu.trim().is_empty()).then_some(request.gpu);
     config.gpu_layers = request.gpu_layers.unwrap_or(DEFAULT_GPU_LAYERS);
+    config.allow_gpu_fallback = request.allow_gpu_fallback;
     config.startup_timeout = Duration::from_millis(
         request
             .startup_timeout_milliseconds
@@ -196,6 +201,7 @@ fn llamafile_error(error: LlamafileError) -> HandlerError {
         LlamafileError::UnsupportedImage(_) => "LLAMAFILE_IMAGE_UNSUPPORTED",
         LlamafileError::EmptyPrompt => "LLAMAFILE_INSTRUCTION_EMPTY",
         LlamafileError::PortInUse(_) => "LLAMAFILE_PORT_IN_USE",
+        LlamafileError::GpuBackendUnavailable { .. } => "LLAMAFILE_GPU_UNAVAILABLE",
         LlamafileError::ExitedEarly(_) => "LLAMAFILE_EXITED_EARLY",
         LlamafileError::StartupTimeout(_) => "LLAMAFILE_STARTUP_TIMEOUT",
         _ => "LLAMAFILE_ERROR",
@@ -234,6 +240,7 @@ mod tests {
                 context_size: None,
                 gpu: String::new(),
                 gpu_layers: None,
+                allow_gpu_fallback: true,
                 startup_timeout_milliseconds: None,
                 request_timeout_milliseconds: None,
             },

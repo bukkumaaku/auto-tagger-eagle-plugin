@@ -2,6 +2,7 @@
 
 use std::{
     fs::{self, OpenOptions},
+    io::{Read, Seek, SeekFrom},
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener},
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
@@ -32,6 +33,7 @@ pub struct LlamafileConfig {
     pub context_size: usize,
     pub gpu: Option<String>,
     pub gpu_layers: i32,
+    pub allow_gpu_fallback: bool,
     pub startup_timeout: Duration,
     pub request_timeout: Duration,
 }
@@ -52,6 +54,7 @@ impl LlamafileConfig {
             context_size: 8192,
             gpu: None,
             gpu_layers: 9999,
+            allow_gpu_fallback: true,
             startup_timeout: DEFAULT_STARTUP_TIMEOUT,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
         }
@@ -146,6 +149,13 @@ pub enum LlamafileError {
     #[error("llamafile exited before becoming ready with status {0}")]
     ExitedEarly(ExitStatus),
 
+    #[error("{backend} backend is unavailable: {detail}. See llamafile log at {log_path}")]
+    GpuBackendUnavailable {
+        backend: String,
+        detail: String,
+        log_path: PathBuf,
+    },
+
     #[error("llamafile did not become ready within {0:?}")]
     StartupTimeout(Duration),
 
@@ -170,6 +180,8 @@ pub struct LlamafileSession {
     child: Child,
     client: Client,
     port: u16,
+    active_gpu: String,
+    fallback_reason: Option<String>,
 }
 
 impl LlamafileSession {
@@ -178,6 +190,45 @@ impl LlamafileSession {
         validate_file(&config.model_path, LlamafileError::ModelNotFound)?;
         validate_file(&config.mmproj_path, LlamafileError::MmprojNotFound)?;
 
+        let attempts = gpu_attempts(&config);
+        let mut unavailable = Vec::new();
+        for (index, gpu) in attempts.iter().enumerate() {
+            let mut attempt = config.clone();
+            attempt.gpu = Some(gpu.clone());
+            if gpu == "disabled" {
+                attempt.gpu_layers = 0;
+            }
+            match Self::start_once(attempt) {
+                Ok(mut session) => {
+                    session.config = config;
+                    session.fallback_reason = (!unavailable.is_empty()).then(|| {
+                        format!(
+                            "{}; fell back to {}",
+                            unavailable.join("; "),
+                            gpu_display_name(&session.active_gpu)
+                        )
+                    });
+                    return Ok(session);
+                }
+                Err(LlamafileError::GpuBackendUnavailable {
+                    backend,
+                    detail,
+                    log_path,
+                }) if index + 1 < attempts.len() => {
+                    unavailable.push(format!(
+                        "{} unavailable: {detail}",
+                        gpu_display_name(&backend)
+                    ));
+                    let _ = log_path;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        unreachable!("GPU attempt list is never empty")
+    }
+
+    fn start_once(config: LlamafileConfig) -> Result<Self, LlamafileError> {
+        let log_offset = log_length(config.log_path.as_deref());
         let runtime_directory = runtime_directory(&config);
         fs::create_dir_all(&runtime_directory).map_err(|source| {
             LlamafileError::CreateRuntimeDirectory {
@@ -197,12 +248,26 @@ impl LlamafileSession {
             child,
             client,
             port,
+            active_gpu: String::new(),
+            fallback_reason: None,
         };
 
         if let Err(error) = session.wait_until_ready() {
             session.stop_process();
+            let output = read_log_since(session.config.log_path.as_deref(), log_offset);
+            if gpu_backend_unavailable(&output) {
+                let backend = canonical_gpu(session.config.gpu.as_deref());
+                return Err(LlamafileError::GpuBackendUnavailable {
+                    detail: gpu_unavailable_detail(&backend, &output),
+                    backend,
+                    log_path: session.config.log_path.clone().unwrap_or_default(),
+                });
+            }
             return Err(error);
         }
+        let output = read_log_since(session.config.log_path.as_deref(), log_offset);
+        session.active_gpu = detect_active_gpu(&output)
+            .unwrap_or_else(|| active_gpu_fallback_name(session.config.gpu.as_deref()));
 
         Ok(session)
     }
@@ -213,6 +278,14 @@ impl LlamafileSession {
 
     pub fn port(&self) -> u16 {
         self.port
+    }
+
+    pub fn active_gpu(&self) -> &str {
+        &self.active_gpu
+    }
+
+    pub fn fallback_reason(&self) -> Option<&str> {
+        self.fallback_reason.as_deref()
     }
 
     pub fn process_image(
@@ -459,6 +532,117 @@ fn spawn_server(
     })
 }
 
+fn canonical_gpu(gpu: Option<&str>) -> String {
+    match gpu.unwrap_or("auto").trim().to_ascii_lowercase().as_str() {
+        "" | "auto" => "auto",
+        "nvidia" | "cuda" | "cublas" => "nvidia",
+        "apple" | "metal" => "apple",
+        "vulkan" | "vk" => "vulkan",
+        "amd" | "rocm" | "rocblas" | "hip" => "amd",
+        "cpu" | "disable" | "disabled" => "disabled",
+        other => other,
+    }
+    .to_string()
+}
+
+fn gpu_attempts(config: &LlamafileConfig) -> Vec<String> {
+    let requested = canonical_gpu(config.gpu.as_deref());
+    if !config.allow_gpu_fallback || matches!(requested.as_str(), "auto" | "disabled") {
+        return vec![requested];
+    }
+    match requested.as_str() {
+        "nvidia" | "apple" | "amd" => {
+            vec![requested, "vulkan".to_string(), "disabled".to_string()]
+        }
+        "vulkan" => vec![requested, "disabled".to_string()],
+        _ => vec![requested],
+    }
+}
+
+fn active_gpu_fallback_name(gpu: Option<&str>) -> String {
+    match canonical_gpu(gpu).as_str() {
+        "disabled" => "cpu".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn detect_active_gpu(output: &str) -> Option<String> {
+    let output = output.to_ascii_lowercase();
+    [
+        ("nvidia cuda gpu support successfully loaded", "nvidia"),
+        ("apple metal gpu support successfully loaded", "apple"),
+        ("amd rocm gpu support successfully loaded", "amd"),
+        ("vulkan gpu support successfully loaded", "vulkan"),
+    ]
+    .into_iter()
+    .find_map(|(marker, backend)| output.contains(marker).then(|| backend.to_string()))
+    .or_else(|| {
+        (output.contains("no usable gpu found")
+            || output.contains("gpu-layers option will be ignored"))
+        .then(|| "cpu".to_string())
+    })
+}
+
+fn gpu_backend_unavailable(output: &str) -> bool {
+    let output = output.to_ascii_lowercase();
+    output.contains("fatal error: support for --gpu")
+        && output.contains("was explicitly requested, but it wasn't available")
+}
+
+fn gpu_unavailable_detail(backend: &str, output: &str) -> String {
+    let output = output.to_ascii_lowercase();
+    if output.contains("no pre-built gpu library found") {
+        if backend == "nvidia" {
+            return "the CUDA runtime library is missing; verify the NVIDIA driver and matching ggml-cuda.dll".to_string();
+        }
+        return "the matching GPU runtime library could not be loaded".to_string();
+    }
+    if output.contains("no devices detected") || output.contains("failed to initialize cuda") {
+        return "the runtime loaded but no compatible GPU was detected; update the GPU driver and verify that the process can access the device".to_string();
+    }
+    match backend {
+        "apple" => "Metal could not be initialized; update macOS or use Vulkan/CPU fallback",
+        "vulkan" => "Vulkan could not be initialized; install a compatible graphics driver or use CPU fallback",
+        _ => "llamafile reported that the requested backend is not available",
+    }
+    .to_string()
+}
+
+fn gpu_display_name(gpu: &str) -> &str {
+    match gpu {
+        "nvidia" => "CUDA",
+        "apple" => "Metal",
+        "vulkan" => "Vulkan",
+        "amd" => "ROCm",
+        "disabled" | "cpu" => "CPU",
+        "auto" => "automatic GPU selection",
+        other => other,
+    }
+}
+
+fn log_length(path: Option<&Path>) -> u64 {
+    path.and_then(|path| fs::metadata(path).ok())
+        .map_or(0, |metadata| metadata.len())
+}
+
+fn read_log_since(path: Option<&Path>, offset: u64) -> String {
+    let Some(path) = path else {
+        return String::new();
+    };
+    let Ok(mut file) = fs::File::open(path) else {
+        return String::new();
+    };
+    let length = file.metadata().map_or(0, |metadata| metadata.len());
+    if file.seek(SeekFrom::Start(offset.min(length))).is_err() {
+        return String::new();
+    }
+    let mut bytes = Vec::new();
+    if file.read_to_end(&mut bytes).is_err() {
+        return String::new();
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
 fn open_log_file(path: &Path) -> Result<fs::File, LlamafileError> {
     if let Some(directory) = path.parent().filter(|path| !path.as_os_str().is_empty()) {
         fs::create_dir_all(directory).map_err(|source| LlamafileError::CreateLogDirectory {
@@ -519,6 +703,40 @@ mod tests {
     use std::{io::Write, time::SystemTime};
 
     use super::*;
+
+    #[test]
+    fn builds_gpu_fallback_chains() {
+        let mut config = LlamafileConfig::new("llamafile", "model", "mmproj");
+        config.gpu = Some("metal".to_string());
+        assert_eq!(gpu_attempts(&config), ["apple", "vulkan", "disabled"]);
+
+        config.gpu = Some("nvidia".to_string());
+        config.allow_gpu_fallback = false;
+        assert_eq!(gpu_attempts(&config), ["nvidia"]);
+
+        config.gpu = Some("cpu".to_string());
+        config.allow_gpu_fallback = true;
+        assert_eq!(gpu_attempts(&config), ["disabled"]);
+    }
+
+    #[test]
+    fn recognizes_gpu_backend_logs() {
+        assert!(gpu_backend_unavailable(
+            "fatal error: support for --gpu nvidia was explicitly requested, but it wasn't available"
+        ));
+        assert_eq!(
+            detect_active_gpu("cuda: NVIDIA CUDA GPU support successfully loaded").as_deref(),
+            Some("nvidia")
+        );
+        assert_eq!(
+            detect_active_gpu("metal: Apple Metal GPU support successfully loaded").as_deref(),
+            Some("apple")
+        );
+        assert_eq!(
+            detect_active_gpu("warning: no usable GPU found").as_deref(),
+            Some("cpu")
+        );
+    }
 
     #[test]
     fn checks_llamafile_before_other_paths() {
