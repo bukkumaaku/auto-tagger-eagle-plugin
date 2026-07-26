@@ -327,7 +327,12 @@ import {
         if (!profiles.some((profile) => profile.id === formData.value.llmProfileId)) {
             formData.value.llmProfileId = profiles[0]?.id || "";
         }
-        if (formData.value.llmProfileId) loadLlmProfile();
+        if (
+            formData.value.llmProvider !== "local" &&
+            formData.value.llmProfileId
+        ) {
+            loadLlmProfile();
+        }
     });
 
     onMounted(initializePage);
