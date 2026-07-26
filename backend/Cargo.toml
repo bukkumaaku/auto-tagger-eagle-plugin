@@ -32,6 +32,7 @@ thiserror = "2"
 text-vector-store = { path = "crates/text-vector-store" }
 tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"] }
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "time"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
 clip-embedding = { path = "crates/clip-embedding" }
 vector-store = { path = "crates/vector-store" }
 video-tagger = { path = "crates/video-tagger" }

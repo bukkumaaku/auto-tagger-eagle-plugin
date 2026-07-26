@@ -56,7 +56,10 @@ type PendingRequest = {
     resolve: (value: unknown) => void;
     reject: (error: Error) => void;
     onProgress?: (progress: ProgressPayload) => void;
+    timeout: ReturnType<typeof setTimeout>;
 };
+
+const WORKER_REQUEST_TIMEOUT_MS = 30 * 60 * 1_000;
 
 export class BackendClientError extends Error {
     readonly code: string;
@@ -91,7 +94,7 @@ export class BackendClient {
     }
 
     get isRunning() {
-        return Boolean(this.child && !this.child.killed);
+        return Boolean(this.child && this.child.exitCode === null && !this.child.killed);
     }
 
     get workerGeneration() {
@@ -112,22 +115,30 @@ export class BackendClient {
             );
         }
 
-        this.child = spawn(this.workerPath, [], {
+        const child = spawn(this.workerPath, [], {
             stdio: ["pipe", "pipe", "pipe"],
             windowsHide: true,
         });
-        this.lines = readline.createInterface({ input: this.child.stdout });
-        this.lines.on("line", (line: string) => this.handleLine(line));
-        this.child.stderr.on("data", (data: { toString(): string }) => {
+        this.child = child;
+        const lines = readline.createInterface({ input: child.stdout });
+        this.lines = lines;
+        lines.on("line", (line: string) => {
+            if (this.child === child) this.handleLine(line);
+        });
+        child.stderr.on("data", (data: { toString(): string }) => {
             console.error(`[ai-worker] ${data.toString().trim()}`);
         });
-        this.child.on("error", (error: Error) => this.rejectAll(error));
-        this.child.on("exit", (code: number | null) => {
-            this.lines?.close();
-            this.lines = null;
-            this.child = null;
-            this.generation++;
-            this.rejectAll(
+        child.on("error", (error: Error) => {
+            if (this.child !== child) return;
+            this.resetWorker(
+                child,
+                new BackendClientError("WORKER_ERROR", error.message),
+            );
+        });
+        child.on("exit", (code: number | null) => {
+            if (this.child !== child) return;
+            this.resetWorker(
+                child,
                 new BackendClientError(
                     "WORKER_EXITED",
                     `ai-worker exited with code ${code}`,
@@ -480,10 +491,21 @@ export class BackendClient {
                 resolve: (value) => resolve(value as ResultDataMap[K]),
                 reject,
                 onProgress,
+                timeout: setTimeout(() => {
+                    if (!this.pending.delete(requestId)) return;
+                    pending.reject(
+                        new BackendClientError(
+                            "WORKER_REQUEST_TIMEOUT",
+                            `ai-worker request ${type} timed out after ${WORKER_REQUEST_TIMEOUT_MS / 60_000} minutes`,
+                            requestId,
+                        ),
+                    );
+                }, WORKER_REQUEST_TIMEOUT_MS),
             };
             this.pending.set(requestId, pending);
             const failWrite = (error: Error) => {
                 if (!this.pending.delete(requestId)) return;
+                clearTimeout(pending.timeout);
                 pending.reject(error);
             };
             try {
@@ -505,16 +527,28 @@ export class BackendClient {
             message = JSON.parse(line) as WorkerMessage;
         } catch (error) {
             console.error("Invalid JSONL from ai-worker", line, error);
+            this.protocolFailure(
+                new BackendClientError("WORKER_PROTOCOL_ERROR", "ai-worker emitted invalid JSON"),
+            );
             return;
         }
 
         if (message.protocolVersion !== PROTOCOL_VERSION) {
             console.error("Unsupported ai-worker protocol version", message);
+            this.protocolFailure(
+                new BackendClientError(
+                    "WORKER_PROTOCOL_ERROR",
+                    `unsupported ai-worker protocol version ${String(message.protocolVersion)}`,
+                ),
+            );
             return;
         }
 
         if (!message.requestId) {
             console.error("Uncorrelated ai-worker message", message);
+            this.protocolFailure(
+                new BackendClientError("WORKER_PROTOCOL_ERROR", "ai-worker emitted an uncorrelated message"),
+            );
             return;
         }
 
@@ -531,6 +565,7 @@ export class BackendClient {
         }
 
         this.pending.delete(message.requestId);
+        clearTimeout(pending.timeout);
         if (message.type === "error") {
             pending.reject(
                 new BackendClientError(
@@ -558,9 +593,26 @@ export class BackendClient {
 
     private rejectAll(error: Error) {
         for (const pending of this.pending.values()) {
+            clearTimeout(pending.timeout);
             pending.reject(error);
         }
         this.pending.clear();
+    }
+
+    private protocolFailure(error: BackendClientError) {
+        const child = this.child;
+        if (child) this.resetWorker(child, error);
+        else this.rejectAll(error);
+    }
+
+    private resetWorker(child: any, error: Error) {
+        if (this.child !== child) return;
+        this.lines?.close();
+        this.lines = null;
+        this.child = null;
+        this.generation++;
+        this.rejectAll(error);
+        if (child.exitCode === null && !child.killed) child.kill();
     }
 }
 

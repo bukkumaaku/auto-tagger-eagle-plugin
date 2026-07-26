@@ -393,6 +393,40 @@ mod tests {
 
     use super::*;
 
+    fn read_http_request(stream: &mut impl Read) -> Vec<u8> {
+        let mut request = Vec::new();
+        let mut expected_length = None;
+        loop {
+            let mut buffer = [0_u8; 8_192];
+            let length = stream.read(&mut buffer).unwrap();
+            assert!(
+                length > 0,
+                "connection closed before the request was complete"
+            );
+            request.extend_from_slice(&buffer[..length]);
+
+            if expected_length.is_none()
+                && let Some(header_end) =
+                    request.windows(4).position(|window| window == b"\r\n\r\n")
+            {
+                let headers = String::from_utf8_lossy(&request[..header_end]);
+                let content_length = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().unwrap())
+                    })
+                    .unwrap_or(0);
+                expected_length = Some(header_end + 4 + content_length);
+            }
+
+            if expected_length.is_some_and(|expected| request.len() >= expected) {
+                return request;
+            }
+        }
+    }
+
     #[test]
     fn sends_native_text_request_and_completes_endpoint() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -477,9 +511,8 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            let mut buffer = [0_u8; 8_192];
-            let length = stream.read(&mut buffer).unwrap();
-            let request = String::from_utf8_lossy(&buffer[..length]);
+            let request = read_http_request(&mut stream);
+            let request = String::from_utf8_lossy(&request);
             assert!(request.contains("\"inline_data\""));
             assert!(request.contains("\"mime_type\":\"image/jpeg\""));
             assert!(!request.contains("\"data\":\"YWJj\""));

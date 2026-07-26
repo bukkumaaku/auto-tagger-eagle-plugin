@@ -1,13 +1,22 @@
 use std::{
-    env, fs, io,
+    env, fs,
+    fs::OpenOptions,
+    io,
+    io::Write,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 #[cfg(test)]
 use std::{collections::HashMap, sync::Mutex};
 
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use base64::{
+    Engine as _,
+    engine::general_purpose::{STANDARD as BASE64, URL_SAFE_NO_PAD},
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -26,6 +35,9 @@ const LLM_ENDPOINT_FIELD: &str = "llmEndpoint";
 const LLM_API_KEY_FIELD: &str = "llmApiKey";
 const LLM_ENDPOINT_SECRET: &str = "config.llm-endpoint";
 const LLM_API_KEY_SECRET: &str = "config.llm-api-key";
+const EMBEDDING_REMOTE_PROFILES_FIELD: &str = "embeddingRemoteProfiles";
+const LLM_REMOTE_PROFILES_FIELD: &str = "llmRemoteProfiles";
+static NEXT_TEMP_FILE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -185,12 +197,12 @@ pub enum ConfigError {
     #[error("failed to {operation} protected config value `{key}`: {message}")]
     SecretStorage {
         operation: &'static str,
-        key: &'static str,
+        key: String,
         message: String,
     },
 
     #[error("protected config value `{key}` is invalid: {message}")]
-    SecretInvalid { key: &'static str, message: String },
+    SecretInvalid { key: String, message: String },
 }
 
 #[derive(Clone, Debug)]
@@ -273,31 +285,64 @@ impl ConfigStore {
 
         let mut needs_migration = false;
         for (field, secret_name) in sensitive_fields() {
-            let Some(stored_value) = object.get_mut(field) else {
+            needs_migration |= self.resolve_secret_field(object, field, secret_name)?;
+        }
+        needs_migration |=
+            self.resolve_profile_secrets(object, EMBEDDING_REMOTE_PROFILES_FIELD, "embedding")?;
+        needs_migration |=
+            self.resolve_profile_secrets(object, LLM_REMOTE_PROFILES_FIELD, "llm")?;
+        Ok(needs_migration)
+    }
+
+    fn resolve_secret_field(
+        &self,
+        object: &mut serde_json::Map<String, serde_json::Value>,
+        field: &str,
+        secret_name: &str,
+    ) -> Result<bool, ConfigError> {
+        let Some(stored_value) = object
+            .get(field)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+        else {
+            return Ok(false);
+        };
+        let reference = secret_reference(secret_name);
+        if stored_value == reference {
+            let stored_secret = self.secrets.get(secret_name)?;
+            let missing = stored_secret.is_none();
+            let secret = stored_secret.unwrap_or_default();
+            object.insert(field.to_string(), serde_json::Value::String(secret));
+            Ok(missing)
+        } else if stored_value.starts_with(SECRET_REFERENCE_PREFIX) {
+            Err(ConfigError::SecretInvalid {
+                key: secret_name.to_string(),
+                message: format!("unexpected secret reference `{stored_value}`"),
+            })
+        } else {
+            Ok(true)
+        }
+    }
+
+    fn resolve_profile_secrets(
+        &self,
+        object: &mut serde_json::Map<String, serde_json::Value>,
+        profiles_field: &str,
+        profile_kind: &str,
+    ) -> Result<bool, ConfigError> {
+        let Some(profiles) = object
+            .get_mut(profiles_field)
+            .and_then(serde_json::Value::as_array_mut)
+        else {
+            return Ok(false);
+        };
+        let mut needs_migration = false;
+        for (index, profile) in profiles.iter_mut().enumerate() {
+            let Some(profile) = profile.as_object_mut() else {
                 continue;
             };
-            let Some(stored_value) = stored_value.as_str() else {
-                continue;
-            };
-            let reference = secret_reference(secret_name);
-            if stored_value == reference {
-                match self.secrets.get(secret_name)? {
-                    Some(secret) => {
-                        object.insert(field.to_string(), serde_json::Value::String(secret));
-                    }
-                    None => {
-                        object.insert(field.to_string(), serde_json::Value::String(String::new()));
-                        needs_migration = true;
-                    }
-                }
-            } else if stored_value.starts_with(SECRET_REFERENCE_PREFIX) {
-                return Err(ConfigError::SecretInvalid {
-                    key: secret_name,
-                    message: format!("unexpected secret reference `{stored_value}`"),
-                });
-            } else {
-                needs_migration = true;
-            }
+            let secret_name = profile_secret_name(profile_kind, index, profile);
+            needs_migration |= self.resolve_secret_field(profile, API_KEY_FIELD, &secret_name)?;
         }
         Ok(needs_migration)
     }
@@ -308,14 +353,52 @@ impl ConfigStore {
         };
 
         for (field, secret_name) in sensitive_fields() {
-            let Some(value) = object.get(field).and_then(serde_json::Value::as_str) else {
+            self.protect_secret_field(object, field, secret_name)?;
+        }
+        self.protect_profile_secrets(object, EMBEDDING_REMOTE_PROFILES_FIELD, "embedding")?;
+        self.protect_profile_secrets(object, LLM_REMOTE_PROFILES_FIELD, "llm")?;
+        Ok(())
+    }
+
+    fn protect_secret_field(
+        &self,
+        object: &mut serde_json::Map<String, serde_json::Value>,
+        field: &str,
+        secret_name: &str,
+    ) -> Result<(), ConfigError> {
+        let Some(value) = object
+            .get(field)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+        else {
+            return Ok(());
+        };
+        self.secrets.set(secret_name, &value)?;
+        object.insert(
+            field.to_string(),
+            serde_json::Value::String(secret_reference(secret_name)),
+        );
+        Ok(())
+    }
+
+    fn protect_profile_secrets(
+        &self,
+        object: &mut serde_json::Map<String, serde_json::Value>,
+        profiles_field: &str,
+        profile_kind: &str,
+    ) -> Result<(), ConfigError> {
+        let Some(profiles) = object
+            .get_mut(profiles_field)
+            .and_then(serde_json::Value::as_array_mut)
+        else {
+            return Ok(());
+        };
+        for (index, profile) in profiles.iter_mut().enumerate() {
+            let Some(profile) = profile.as_object_mut() else {
                 continue;
             };
-            self.secrets.set(secret_name, value)?;
-            object.insert(
-                field.to_string(),
-                serde_json::Value::String(secret_reference(secret_name)),
-            );
+            let secret_name = profile_secret_name(profile_kind, index, profile);
+            self.protect_secret_field(profile, API_KEY_FIELD, &secret_name)?;
         }
         Ok(())
     }
@@ -329,7 +412,7 @@ impl ConfigStore {
 
         let mut source = serde_json::to_string_pretty(value)?;
         source.push('\n');
-        fs::write(&self.path, source).map_err(|source| ConfigError::Write {
+        write_atomic(&self.path, source.as_bytes()).map_err(|source| ConfigError::Write {
             path: self.path.clone(),
             source,
         })
@@ -379,16 +462,118 @@ fn secret_reference(secret_name: &str) -> String {
     format!("{SECRET_REFERENCE_PREFIX}{secret_name}")
 }
 
+fn profile_secret_name(
+    profile_kind: &str,
+    index: usize,
+    profile: &serde_json::Map<String, serde_json::Value>,
+) -> String {
+    let id = profile
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let encoded_id = if id.is_empty() {
+        "empty".to_string()
+    } else {
+        URL_SAFE_NO_PAD.encode(id.as_bytes())
+    };
+    format!("config.profile.{profile_kind}.{index}.{encoded_id}.api-key")
+}
+
+fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("config");
+    let temp_path = loop {
+        let sequence = NEXT_TEMP_FILE.fetch_add(1, Ordering::Relaxed);
+        let candidate = parent.join(format!(
+            ".{file_name}.{}.{}.tmp",
+            std::process::id(),
+            sequence
+        ));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(mut file) => {
+                if let Err(error) = (|| {
+                    file.write_all(contents)?;
+                    file.flush()?;
+                    file.sync_all()
+                })() {
+                    drop(file);
+                    let _ = fs::remove_file(&candidate);
+                    return Err(error);
+                }
+                break candidate;
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    };
+
+    if let Err(error) = replace_file(&temp_path, path) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(error);
+    }
+
+    #[cfg(unix)]
+    fs::File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {
+    fs::rename(source, destination)
+}
+
+#[cfg(windows)]
+fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{REPLACEFILE_IGNORE_MERGE_ERRORS, ReplaceFileW};
+
+    if !destination.exists() {
+        return fs::rename(source, destination);
+    }
+    let destination = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let source = source
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let replaced = unsafe {
+        ReplaceFileW(
+            destination.as_ptr(),
+            source.as_ptr(),
+            std::ptr::null(),
+            REPLACEFILE_IGNORE_MERGE_ERRORS,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    if replaced == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
 trait SecretStore: Send + Sync + std::fmt::Debug {
-    fn get(&self, key: &'static str) -> Result<Option<String>, ConfigError>;
-    fn set(&self, key: &'static str, value: &str) -> Result<(), ConfigError>;
+    fn get(&self, key: &str) -> Result<Option<String>, ConfigError>;
+    fn set(&self, key: &str, value: &str) -> Result<(), ConfigError>;
 }
 
 #[derive(Debug)]
 struct KeyringSecretStore;
 
 impl SecretStore for KeyringSecretStore {
-    fn get(&self, key: &'static str) -> Result<Option<String>, ConfigError> {
+    fn get(&self, key: &str) -> Result<Option<String>, ConfigError> {
         let entry = keyring_entry(key, "read")?;
         let encoded = match entry.get_password() {
             Ok(value) => value,
@@ -398,24 +583,24 @@ impl SecretStore for KeyringSecretStore {
         let encoded = encoded
             .strip_prefix("v1:")
             .ok_or_else(|| ConfigError::SecretInvalid {
-                key,
+                key: key.to_string(),
                 message: "unsupported credential format".to_string(),
             })?;
         let bytes = BASE64
             .decode(encoded)
             .map_err(|error| ConfigError::SecretInvalid {
-                key,
+                key: key.to_string(),
                 message: error.to_string(),
             })?;
         String::from_utf8(bytes)
             .map(Some)
             .map_err(|error| ConfigError::SecretInvalid {
-                key,
+                key: key.to_string(),
                 message: error.to_string(),
             })
     }
 
-    fn set(&self, key: &'static str, value: &str) -> Result<(), ConfigError> {
+    fn set(&self, key: &str, value: &str) -> Result<(), ConfigError> {
         let entry = keyring_entry(key, "write")?;
         let encoded = format!("v1:{}", BASE64.encode(value.as_bytes()));
         entry
@@ -424,22 +609,19 @@ impl SecretStore for KeyringSecretStore {
     }
 }
 
-fn keyring_entry(
-    key: &'static str,
-    operation: &'static str,
-) -> Result<keyring::Entry, ConfigError> {
+fn keyring_entry(key: &str, operation: &'static str) -> Result<keyring::Entry, ConfigError> {
     keyring::Entry::new(KEYRING_SERVICE, key)
         .map_err(|error| secret_storage_error(operation, key, error))
 }
 
 fn secret_storage_error(
     operation: &'static str,
-    key: &'static str,
+    key: &str,
     error: impl std::fmt::Display,
 ) -> ConfigError {
     ConfigError::SecretStorage {
         operation,
-        key,
+        key: key.to_string(),
         message: error.to_string(),
     }
 }
@@ -447,17 +629,20 @@ fn secret_storage_error(
 #[cfg(test)]
 #[derive(Debug, Default)]
 struct MemorySecretStore {
-    values: Mutex<HashMap<&'static str, String>>,
+    values: Mutex<HashMap<String, String>>,
 }
 
 #[cfg(test)]
 impl SecretStore for MemorySecretStore {
-    fn get(&self, key: &'static str) -> Result<Option<String>, ConfigError> {
+    fn get(&self, key: &str) -> Result<Option<String>, ConfigError> {
         Ok(self.values.lock().unwrap().get(key).cloned())
     }
 
-    fn set(&self, key: &'static str, value: &str) -> Result<(), ConfigError> {
-        self.values.lock().unwrap().insert(key, value.to_string());
+    fn set(&self, key: &str, value: &str) -> Result<(), ConfigError> {
+        self.values
+            .lock()
+            .unwrap()
+            .insert(key.to_string(), value.to_string());
         Ok(())
     }
 }
@@ -584,10 +769,17 @@ mod tests {
             embedding_resolved_model_key: "open_ai:text-embedding-3-small:1536:key".to_string(),
             embedding_remote_profiles: vec![RemoteEmbeddingProfile {
                 id: "remote-1".to_string(),
+                api_key: "embedding-profile-secret".to_string(),
                 model: "text-embedding-3-small".to_string(),
                 dimension: 1_536,
                 resolved_model_key: "open_ai:text-embedding-3-small:1536:key".to_string(),
                 ..RemoteEmbeddingProfile::default()
+            }],
+            llm_remote_profiles: vec![RemoteLlmProfile {
+                id: "llm/远程 1".to_string(),
+                api_key: "llm-profile-secret".to_string(),
+                model: "vision-model".to_string(),
+                ..RemoteLlmProfile::default()
             }],
             ..Config::default()
         };
@@ -599,6 +791,10 @@ mod tests {
         assert_eq!(actual, expected);
         assert!(!source_before_read.contains("https://example.com/v1/embeddings"));
         assert!(!source_before_read.contains("secret-api-key"));
+        assert!(!source_before_read.contains("embedding-profile-secret"));
+        assert!(!source_before_read.contains("llm-profile-secret"));
+        assert!(source_before_read.contains("$keyring:v1:config.profile.embedding.0."));
+        assert!(source_before_read.contains("$keyring:v1:config.profile.llm.0."));
         assert_eq!(
             fs::read_to_string(store.path()).unwrap(),
             source_before_read
@@ -640,6 +836,33 @@ mod tests {
         assert!(!stored.contains("legacy-key"));
         assert!(stored.contains("$keyring:v1:config.endpoint"));
         assert!(stored.contains("$keyring:v1:config.api-key"));
+        fs::remove_file(store.path()).unwrap();
+    }
+
+    #[test]
+    fn migrates_plaintext_remote_profile_api_keys_to_protected_storage() {
+        let store = test_store("profile-plaintext-migration");
+        fs::write(
+            store.path(),
+            r#"{
+                embeddingRemoteProfiles: [{ id: 'embedding-1', apiKey: 'legacy-embedding-key' }],
+                llmRemoteProfiles: [{ id: 'llm-1', apiKey: 'legacy-llm-key' }],
+            }"#,
+        )
+        .unwrap();
+
+        let config = store.read().unwrap();
+        let stored = fs::read_to_string(store.path()).unwrap();
+
+        assert_eq!(
+            config.embedding_remote_profiles[0].api_key,
+            "legacy-embedding-key"
+        );
+        assert_eq!(config.llm_remote_profiles[0].api_key, "legacy-llm-key");
+        assert!(!stored.contains("legacy-embedding-key"));
+        assert!(!stored.contains("legacy-llm-key"));
+        assert!(stored.contains("$keyring:v1:config.profile.embedding.0."));
+        assert!(stored.contains("$keyring:v1:config.profile.llm.0."));
         fs::remove_file(store.path()).unwrap();
     }
 
