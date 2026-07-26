@@ -426,9 +426,16 @@ import {
     const ensureSession = async (backend: BackendClient) => {
         const paths = await resolveRuntimePaths();
         const gpuLayers = Number.parseInt(config.llmNGL || "9999", 10);
+        const now = new Date();
+        const logDate = [
+            now.getFullYear(),
+            String(now.getMonth() + 1).padStart(2, "0"),
+            String(now.getDate()).padStart(2, "0"),
+        ].join("-");
         await backend.loadLlamafile({
             sessionId: LLAMAFILE_SESSION_ID,
             ...paths,
+            logPath: path.join(config.modelLocation, "logs", `${logDate}.log`),
             port: 0,
             contextSize: Number(config.llmContextSize) || 8192,
             gpu: config.llmUseVulkan

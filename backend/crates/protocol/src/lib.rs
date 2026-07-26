@@ -411,6 +411,8 @@ pub struct LlamafileLoadRequest {
     pub model_path: String,
     pub mmproj_path: String,
     #[serde(default)]
+    pub log_path: String,
+    #[serde(default)]
     pub scratch_directory: String,
     #[serde(default)]
     pub port: u16,
@@ -1265,6 +1267,7 @@ mod tests {
             Command::LlamafileLoad(payload) => {
                 assert_eq!(payload.session_id, "main");
                 assert_eq!(payload.llamafile_path, "llamafile.exe");
+                assert!(payload.log_path.is_empty());
                 assert_eq!(payload.context_size, None);
                 assert_eq!(payload.gpu_layers, None);
             }

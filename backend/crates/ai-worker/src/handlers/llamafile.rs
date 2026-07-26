@@ -131,6 +131,7 @@ fn build_config(request: LlamafileLoadRequest) -> LlamafileConfig {
         request.model_path,
         request.mmproj_path,
     );
+    config.log_path = (!request.log_path.trim().is_empty()).then(|| request.log_path.into());
     config.scratch_directory =
         (!request.scratch_directory.trim().is_empty()).then(|| request.scratch_directory.into());
     config.port = request.port;
@@ -209,6 +210,7 @@ mod tests {
                 llamafile_path: "missing.exe".to_string(),
                 model_path: "missing.gguf".to_string(),
                 mmproj_path: "missing-mmproj.gguf".to_string(),
+                log_path: String::new(),
                 scratch_directory: String::new(),
                 port: 0,
                 context_size: None,

@@ -1,7 +1,7 @@
 //! Starts a local llamafile vision server and serializes image requests through a mutable session.
 
 use std::{
-    fs,
+    fs::{self, OpenOptions},
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener},
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
@@ -26,6 +26,7 @@ pub struct LlamafileConfig {
     pub executable_path: PathBuf,
     pub model_path: PathBuf,
     pub mmproj_path: PathBuf,
+    pub log_path: Option<PathBuf>,
     pub scratch_directory: Option<PathBuf>,
     pub port: u16,
     pub context_size: usize,
@@ -45,6 +46,7 @@ impl LlamafileConfig {
             executable_path: executable_path.into(),
             model_path: model_path.into(),
             mmproj_path: mmproj_path.into(),
+            log_path: None,
             scratch_directory: None,
             port: 0,
             context_size: 8192,
@@ -125,6 +127,18 @@ pub enum LlamafileError {
 
     #[error("failed to start llamafile at {path}: {source}")]
     Spawn {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
+    #[error("failed to create llamafile log directory {path}: {source}")]
+    CreateLogDirectory {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
+    #[error("failed to open llamafile log file {path}: {source}")]
+    OpenLogFile {
         path: PathBuf,
         source: std::io::Error,
     },
@@ -404,6 +418,16 @@ fn spawn_server(
     runtime_directory: &Path,
     port: u16,
 ) -> Result<Child, LlamafileError> {
+    let log_file = config.log_path.as_deref().map(open_log_file).transpose()?;
+    let stdout = log_file
+        .as_ref()
+        .map(|file| file.try_clone())
+        .transpose()
+        .map_err(|source| LlamafileError::OpenLogFile {
+            path: config.log_path.clone().unwrap_or_default(),
+            source,
+        })?;
+
     let mut command = Command::new(&config.executable_path);
     command
         .arg("--server")
@@ -420,8 +444,8 @@ fn spawn_server(
         .arg("-ngl")
         .arg(config.gpu_layers.to_string())
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(stdout.map_or_else(Stdio::null, Stdio::from))
+        .stderr(log_file.map_or_else(Stdio::null, Stdio::from))
         .current_dir(runtime_directory);
 
     if let Some(gpu) = config.gpu.as_deref().filter(|gpu| !gpu.trim().is_empty()) {
@@ -433,6 +457,24 @@ fn spawn_server(
         path: config.executable_path.clone(),
         source,
     })
+}
+
+fn open_log_file(path: &Path) -> Result<fs::File, LlamafileError> {
+    if let Some(directory) = path.parent().filter(|path| !path.as_os_str().is_empty()) {
+        fs::create_dir_all(directory).map_err(|source| LlamafileError::CreateLogDirectory {
+            path: directory.to_path_buf(),
+            source,
+        })?;
+    }
+
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|source| LlamafileError::OpenLogFile {
+            path: path.to_path_buf(),
+            source,
+        })
 }
 
 fn apply_runtime_environment(command: &mut Command, runtime_directory: &Path) {
@@ -474,6 +516,8 @@ fn truncate(value: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::{io::Write, time::SystemTime};
+
     use super::*;
 
     #[test]
@@ -508,5 +552,21 @@ mod tests {
         let payload = completion_payload(&request, "data:image/png;base64,test".to_string());
 
         assert_eq!(payload["chat_template_kwargs"]["enable_thinking"], false);
+    }
+
+    #[test]
+    fn creates_and_appends_to_log_file() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("llamafile-log-{unique}"));
+        let log_path = root.join("logs").join("2026-07-26.log");
+
+        writeln!(open_log_file(&log_path).unwrap(), "first").unwrap();
+        writeln!(open_log_file(&log_path).unwrap(), "second").unwrap();
+
+        assert_eq!(fs::read_to_string(&log_path).unwrap(), "first\nsecond\n");
+        fs::remove_dir_all(root).unwrap();
     }
 }

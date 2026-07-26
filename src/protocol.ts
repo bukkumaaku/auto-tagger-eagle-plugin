@@ -249,6 +249,7 @@ export type LlamafileLoadRequest = {
     llamafilePath: string;
     modelPath: string;
     mmprojPath: string;
+    logPath?: string;
     scratchDirectory?: string;
     port?: number;
     contextSize?: number;
