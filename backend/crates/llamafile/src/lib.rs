@@ -704,6 +704,7 @@ fn spawn_server(
     if let Some(gpu) = config.gpu.as_deref().filter(|gpu| !gpu.trim().is_empty()) {
         command.arg("--gpu").arg(gpu);
     }
+    apply_gpu_environment(&mut command, config.gpu.as_deref());
 
     #[cfg(target_os = "macos")]
     {
@@ -742,6 +743,16 @@ fn canonical_gpu(gpu: Option<&str>) -> String {
     }
     .to_string()
 }
+
+#[cfg(windows)]
+fn apply_gpu_environment(command: &mut Command, gpu: Option<&str>) {
+    if canonical_gpu(gpu) == "vulkan" {
+        command.env("DISABLE_VULKAN_OBS_CAPTURE", "1");
+    }
+}
+
+#[cfg(not(windows))]
+fn apply_gpu_environment(_command: &mut Command, _gpu: Option<&str>) {}
 
 fn gpu_attempts(config: &LlamafileConfig) -> Vec<String> {
     let requested = canonical_gpu(config.gpu.as_deref());
@@ -984,6 +995,28 @@ mod tests {
 
         assert_eq!(fs::read_to_string(&log_path).unwrap(), "first\nsecond\n");
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn disables_obs_capture_only_for_vulkan() {
+        for gpu in ["vulkan", "vk"] {
+            let mut command = Command::new("llamafile");
+            apply_gpu_environment(&mut command, Some(gpu));
+            let value = command
+                .get_envs()
+                .find(|(key, _)| *key == "DISABLE_VULKAN_OBS_CAPTURE")
+                .and_then(|(_, value)| value);
+            assert_eq!(value, Some(std::ffi::OsStr::new("1")));
+        }
+
+        let mut command = Command::new("llamafile");
+        apply_gpu_environment(&mut command, Some("nvidia"));
+        assert!(
+            command
+                .get_envs()
+                .all(|(key, _)| key != "DISABLE_VULKAN_OBS_CAPTURE")
+        );
     }
 
     #[cfg(windows)]
