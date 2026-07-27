@@ -30,18 +30,25 @@ const HOST: &str = "127.0.0.1";
 const DEFAULT_STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 const HEALTH_INTERVAL: Duration = Duration::from_millis(500);
+#[cfg(target_os = "macos")]
+const SUPERVISOR_ARGUMENT: &str = "--internal-llamafile-supervisor";
 
 #[cfg(windows)]
-struct KillOnCloseJob {
-    handle: OwnedHandle,
+struct ProcessContainment {
+    _handle: OwnedHandle,
 }
 
-#[cfg(not(windows))]
-struct KillOnCloseJob;
+#[cfg(target_os = "macos")]
+struct ProcessContainment {
+    supervisor: Child,
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+struct ProcessContainment;
 
 #[cfg(windows)]
-impl KillOnCloseJob {
-    fn new() -> std::io::Result<Self> {
+impl ProcessContainment {
+    fn bind(child: &Child) -> std::io::Result<Self> {
         let raw_handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
         if raw_handle.is_null() {
             return Err(std::io::Error::last_os_error());
@@ -62,29 +69,131 @@ impl KillOnCloseJob {
             return Err(std::io::Error::last_os_error());
         }
 
-        Ok(Self { handle })
-    }
-
-    fn assign(&self, child: &Child) -> std::io::Result<()> {
-        let assigned = unsafe {
-            AssignProcessToJobObject(self.handle.as_raw_handle(), child.as_raw_handle())
-        };
+        let assigned =
+            unsafe { AssignProcessToJobObject(handle.as_raw_handle(), child.as_raw_handle()) };
         if assigned == 0 {
-            Err(std::io::Error::last_os_error())
-        } else {
-            Ok(())
+            return Err(std::io::Error::last_os_error());
+        }
+
+        Ok(Self { _handle: handle })
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl ProcessContainment {
+    fn bind(child: &Child) -> std::io::Result<Self> {
+        let mut supervisor = Command::new(std::env::current_exe()?)
+            .arg(SUPERVISOR_ARGUMENT)
+            .arg(std::process::id().to_string())
+            .arg(child.id().to_string())
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()?;
+        let mut ready = [0_u8; 1];
+        let handshake = supervisor
+            .stdout
+            .take()
+            .ok_or_else(|| std::io::Error::other("supervisor stdout was not captured"))
+            .and_then(|mut stdout| stdout.read_exact(&mut ready));
+        if handshake.is_err() || ready[0] != b'R' {
+            let _ = supervisor.kill();
+            let _ = supervisor.wait();
+            return Err(handshake
+                .err()
+                .unwrap_or_else(|| std::io::Error::other("invalid supervisor handshake")));
+        }
+        Ok(Self { supervisor })
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for ProcessContainment {
+    fn drop(&mut self) {
+        if self.supervisor.try_wait().ok().flatten().is_none() {
+            let _ = self.supervisor.kill();
+            let _ = self.supervisor.wait();
         }
     }
 }
 
-#[cfg(not(windows))]
-impl KillOnCloseJob {
-    fn new() -> std::io::Result<Self> {
+#[cfg(not(any(windows, target_os = "macos")))]
+impl ProcessContainment {
+    fn bind(_child: &Child) -> std::io::Result<Self> {
         Ok(Self)
     }
+}
 
-    fn assign(&self, _child: &Child) -> std::io::Result<()> {
-        Ok(())
+#[cfg(target_os = "macos")]
+pub fn run_process_supervisor_if_requested() -> bool {
+    let mut args = std::env::args();
+    let _executable = args.next();
+    if args.next().as_deref() != Some(SUPERVISOR_ARGUMENT) {
+        return false;
+    }
+
+    let result = args
+        .next()
+        .and_then(|value| value.parse::<u32>().ok())
+        .zip(args.next().and_then(|value| value.parse::<u32>().ok()))
+        .ok_or_else(|| "missing supervisor process IDs".to_string())
+        .and_then(|(parent_pid, llamafile_pid)| {
+            supervise_process(parent_pid, llamafile_pid).map_err(|error| error.to_string())
+        });
+    if let Err(error) = result {
+        eprintln!("llamafile process supervisor failed: {error}");
+    }
+    true
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn run_process_supervisor_if_requested() -> bool {
+    false
+}
+
+#[cfg(target_os = "macos")]
+fn supervise_process(parent_pid: u32, llamafile_pid: u32) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let expected_parent = i32::try_from(parent_pid)
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid parent PID"))?;
+    let llamafile_pid = i32::try_from(llamafile_pid).map_err(|_| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid llamafile PID")
+    })?;
+    let _ = std::io::stdout().write_all(b"R");
+    let _ = std::io::stdout().flush();
+
+    while unsafe { libc::getppid() } == expected_parent && process_is_running(llamafile_pid) {
+        thread::sleep(Duration::from_millis(250));
+    }
+    if unsafe { libc::getppid() } == expected_parent {
+        return Ok(());
+    }
+
+    terminate_process_group(llamafile_pid, libc::SIGTERM);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline && process_is_running(llamafile_pid) {
+        thread::sleep(Duration::from_millis(100));
+    }
+    if process_is_running(llamafile_pid) {
+        terminate_process_group(llamafile_pid, libc::SIGKILL);
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn process_is_running(pid: i32) -> bool {
+    if unsafe { libc::kill(pid, 0) } == 0 {
+        return true;
+    }
+    std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(target_os = "macos")]
+fn terminate_process_group(leader_pid: i32, signal: i32) {
+    unsafe {
+        libc::kill(-leader_pid, signal);
+        libc::kill(leader_pid, signal);
     }
 }
 
@@ -247,7 +356,7 @@ pub enum LlamafileError {
 pub struct LlamafileSession {
     config: LlamafileConfig,
     child: Child,
-    _kill_on_close_job: KillOnCloseJob,
+    _process_containment: ProcessContainment,
     client: Client,
     port: u16,
     active_gpu: String,
@@ -312,11 +421,11 @@ impl LlamafileSession {
             .timeout(config.request_timeout)
             .build()
             .map_err(LlamafileError::Request)?;
-        let (child, kill_on_close_job) = spawn_server(&config, &runtime_directory, port)?;
+        let (child, process_containment) = spawn_server(&config, &runtime_directory, port)?;
         let mut session = Self {
             config,
             child,
-            _kill_on_close_job: kill_on_close_job,
+            _process_containment: process_containment,
             client,
             port,
             active_gpu: String::new(),
@@ -561,7 +670,7 @@ fn spawn_server(
     config: &LlamafileConfig,
     runtime_directory: &Path,
     port: u16,
-) -> Result<(Child, KillOnCloseJob), LlamafileError> {
+) -> Result<(Child, ProcessContainment), LlamafileError> {
     let log_file = config.log_path.as_deref().map(open_log_file).transpose()?;
     let stdout = log_file
         .as_ref()
@@ -596,19 +705,29 @@ fn spawn_server(
         command.arg("--gpu").arg(gpu);
     }
 
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+
     apply_runtime_environment(&mut command, runtime_directory);
-    let job = KillOnCloseJob::new().map_err(LlamafileError::ProcessContainment)?;
     let mut child = command.spawn().map_err(|source| LlamafileError::Spawn {
         path: config.executable_path.clone(),
         source,
     })?;
-    if let Err(source) = job.assign(&child) {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(LlamafileError::ProcessContainment(source));
-    }
-
-    Ok((child, job))
+    let containment = match ProcessContainment::bind(&child) {
+        Ok(containment) => containment,
+        Err(source) => {
+            #[cfg(target_os = "macos")]
+            terminate_process_group(child.id() as i32, libc::SIGKILL);
+            #[cfg(not(target_os = "macos"))]
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(LlamafileError::ProcessContainment(source));
+        }
+    };
+    Ok((child, containment))
 }
 
 fn canonical_gpu(gpu: Option<&str>) -> String {
@@ -870,7 +989,6 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn closing_job_terminates_assigned_child() {
-        let job = KillOnCloseJob::new().unwrap();
         let mut child = Command::new(std::env::current_exe().unwrap())
             .args(["--ignored", "--exact", "tests::waits_for_job_close"])
             .env("LLAMAFILE_JOB_TEST_CHILD", "1")
@@ -879,9 +997,9 @@ mod tests {
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
-        job.assign(&child).unwrap();
+        let containment = ProcessContainment::bind(&child).unwrap();
 
-        drop(job);
+        drop(containment);
 
         let deadline = Instant::now() + Duration::from_secs(5);
         while child.try_wait().unwrap().is_none() {

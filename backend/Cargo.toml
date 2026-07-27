@@ -17,6 +17,7 @@ gemini-vision = { path = "crates/gemini-vision" }
 image = { version = "0.25", default-features = false, features = ["bmp", "jpeg", "png", "webp"] }
 json5 = "0.4"
 keyring = { version = "3.6", default-features = false, features = ["apple-native", "windows-native"] }
+libc = "0.2"
 llamafile = { path = "crates/llamafile" }
 ndarray = "0.16"
 openai-embedding = { path = "crates/openai-embedding" }
