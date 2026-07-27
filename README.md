@@ -2,6 +2,8 @@
 
 [English](./README.en.md) | 简体中文
 
+> **兼容性提示：** 当前 Qwen 3.5 系列模型无法使用 Vulkan 后端运行，这是 llamafile/llama.cpp 的上游兼容性问题。请改用 CUDA、Metal（macOS）或 CPU 后端。
+
 Eagle Auto Tagger 是一个使用 Rust 后端和 Vue 界面的 Eagle 插件，用于图片与视频打标、视觉语言模型标签和注释生成、一键处理，以及图片、标签和注释的混合语义搜索。
 
 当前版本：`2.2.2`

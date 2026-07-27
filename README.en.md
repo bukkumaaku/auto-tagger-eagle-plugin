@@ -2,6 +2,8 @@
 
 English | [简体中文](./README.md)
 
+> **Compatibility notice:** Qwen 3.5 family models currently cannot run with the Vulkan backend due to an upstream llamafile/llama.cpp compatibility issue. Use CUDA, Metal (macOS), or CPU instead.
+
 Eagle Auto Tagger is an Eagle plugin with a Rust backend and Vue interface. It provides image and video tagging, vision-language tag and annotation generation, one-click workflows, and combined semantic search over images, tags, and annotations.
 
 Current version: `2.2.2`
