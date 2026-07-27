@@ -17,10 +17,76 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use thiserror::Error;
 
+#[cfg(windows)]
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+#[cfg(windows)]
+use windows_sys::Win32::System::JobObjects::{
+    AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+    SetInformationJobObject,
+};
+
 const HOST: &str = "127.0.0.1";
 const DEFAULT_STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 const HEALTH_INTERVAL: Duration = Duration::from_millis(500);
+
+#[cfg(windows)]
+struct KillOnCloseJob {
+    handle: OwnedHandle,
+}
+
+#[cfg(not(windows))]
+struct KillOnCloseJob;
+
+#[cfg(windows)]
+impl KillOnCloseJob {
+    fn new() -> std::io::Result<Self> {
+        let raw_handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        if raw_handle.is_null() {
+            return Err(std::io::Error::last_os_error());
+        }
+        let handle = unsafe { OwnedHandle::from_raw_handle(raw_handle) };
+
+        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let configured = unsafe {
+            SetInformationJobObject(
+                handle.as_raw_handle(),
+                JobObjectExtendedLimitInformation,
+                std::ptr::from_ref(&limits).cast(),
+                std::mem::size_of_val(&limits) as u32,
+            )
+        };
+        if configured == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+
+        Ok(Self { handle })
+    }
+
+    fn assign(&self, child: &Child) -> std::io::Result<()> {
+        let assigned = unsafe {
+            AssignProcessToJobObject(self.handle.as_raw_handle(), child.as_raw_handle())
+        };
+        if assigned == 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[cfg(not(windows))]
+impl KillOnCloseJob {
+    fn new() -> std::io::Result<Self> {
+        Ok(Self)
+    }
+
+    fn assign(&self, _child: &Child) -> std::io::Result<()> {
+        Ok(())
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LlamafileConfig {
@@ -134,6 +200,9 @@ pub enum LlamafileError {
         source: std::io::Error,
     },
 
+    #[error("failed to bind llamafile to the parent process lifetime: {0}")]
+    ProcessContainment(std::io::Error),
+
     #[error("failed to create llamafile log directory {path}: {source}")]
     CreateLogDirectory {
         path: PathBuf,
@@ -178,6 +247,7 @@ pub enum LlamafileError {
 pub struct LlamafileSession {
     config: LlamafileConfig,
     child: Child,
+    _kill_on_close_job: KillOnCloseJob,
     client: Client,
     port: u16,
     active_gpu: String,
@@ -242,10 +312,11 @@ impl LlamafileSession {
             .timeout(config.request_timeout)
             .build()
             .map_err(LlamafileError::Request)?;
-        let child = spawn_server(&config, &runtime_directory, port)?;
+        let (child, kill_on_close_job) = spawn_server(&config, &runtime_directory, port)?;
         let mut session = Self {
             config,
             child,
+            _kill_on_close_job: kill_on_close_job,
             client,
             port,
             active_gpu: String::new(),
@@ -490,7 +561,7 @@ fn spawn_server(
     config: &LlamafileConfig,
     runtime_directory: &Path,
     port: u16,
-) -> Result<Child, LlamafileError> {
+) -> Result<(Child, KillOnCloseJob), LlamafileError> {
     let log_file = config.log_path.as_deref().map(open_log_file).transpose()?;
     let stdout = log_file
         .as_ref()
@@ -526,10 +597,18 @@ fn spawn_server(
     }
 
     apply_runtime_environment(&mut command, runtime_directory);
-    command.spawn().map_err(|source| LlamafileError::Spawn {
+    let job = KillOnCloseJob::new().map_err(LlamafileError::ProcessContainment)?;
+    let mut child = command.spawn().map_err(|source| LlamafileError::Spawn {
         path: config.executable_path.clone(),
         source,
-    })
+    })?;
+    if let Err(source) = job.assign(&child) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(LlamafileError::ProcessContainment(source));
+    }
+
+    Ok((child, job))
 }
 
 fn canonical_gpu(gpu: Option<&str>) -> String {
@@ -786,5 +865,41 @@ mod tests {
 
         assert_eq!(fs::read_to_string(&log_path).unwrap(), "first\nsecond\n");
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn closing_job_terminates_assigned_child() {
+        let job = KillOnCloseJob::new().unwrap();
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", "tests::waits_for_job_close"])
+            .env("LLAMAFILE_JOB_TEST_CHILD", "1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        job.assign(&child).unwrap();
+
+        drop(job);
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while child.try_wait().unwrap().is_none() {
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("child process survived after the job handle was closed");
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn waits_for_job_close() {
+        if std::env::var_os("LLAMAFILE_JOB_TEST_CHILD").is_some() {
+            thread::sleep(Duration::from_secs(30));
+        }
     }
 }
